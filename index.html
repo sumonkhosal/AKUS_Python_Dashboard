@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AKUS | Virtual Control Bench (GitHub Cloud Edition)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --background: #0b1220;
+      --card: #131f30;
+      --border: #263449;
+      --foreground: #e6edf7;
+      --muted-foreground: #9eb2c9;
+    }
+    body {
+      background-color: var(--background);
+      color: var(--foreground);
+      font-family: Inter, "Segoe UI", system-ui, sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 select-none">
+  <div class="max-w-[1560px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="lg:col-span-3 bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 flex flex-col gap-3 shadow-sm">
+      <div>
+        <div class="flex items-center justify-between">
+          <h1 class="text-lg font-bold tracking-tight"><span class="text-sky-400">AKUS</span> Control Studio</h1>
+          <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">● SIMULATION ONLY</span>
+        </div>
+        <p class="text-xs text-[var(--muted-foreground)] mt-1">Derived from TwinCAT 3 PLC / Visualization / Scope project · Runs 100% on GitHub Cloud (Zero Laptop Storage)</p>
+      </div>
+
+      <hr class="border-[var(--border)]" />
+
+      <div class="flex flex-col gap-1.5">
+        <label class="text-xs font-semibold text-[var(--muted-foreground)]">Numerical plant</label>
+        <select id="plantSelect" class="bg-[var(--background)] text-[var(--foreground)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+          <option value="Ideal NC trajectory">Ideal NC trajectory</option>
+          <option value="Dynamic force model">Dynamic force model</option>
+        </select>
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <div class="flex justify-between text-xs">
+          <span class="font-semibold text-[var(--muted-foreground)]">Simulation speed</span>
+          <span id="speedVal" class="font-bold text-sky-400">12× real time</span>
+        </div>
+        <input id="speedSlider" type="range" min="1" max="60" value="12" class="w-full accent-sky-500" />
+      </div>
+
+      <label class="flex items-center gap-2 text-xs cursor-pointer">
+        <input id="liveClockToggle" type="checkbox" checked class="accent-sky-500 rounded" />
+        <span>Live simulation clock</span>
+      </label>
+
+      <label class="flex items-center gap-2 text-xs cursor-pointer">
+        <input id="elevatorToggle" type="checkbox" class="accent-sky-500 rounded" />
+        <span>Elevator mode (zero gravitational term)</span>
+      </label>
+
+      <div class="grid grid-cols-2 gap-2 mt-1">
+        <button onclick="invoke('stop')" class="bg-[var(--background)] hover:opacity-90 border border-[var(--border)] rounded-lg py-2 px-3 text-xs font-semibold transition">⏹ Stop</button>
+        <button onclick="invoke('emergency_stop')" class="bg-red-600 hover:bg-red-500 text-white rounded-lg py-2 px-3 text-xs font-bold transition">⚠ E-STOP</button>
+      </div>
+
+      <button onclick="invoke('reset')" class="bg-[var(--background)] hover:opacity-90 border border-[var(--border)] rounded-lg py-2 px-3 text-xs font-semibold transition">Reset virtual controller</button>
+      <button onclick="invoke('finish_operation')" class="bg-sky-600 hover:bg-sky-500 text-white rounded-lg py-2 px-3 text-xs font-bold transition">⚡ Run sequence to completion</button>
+      <button onclick="invoke('fast_forward', 5.0)" class="bg-[var(--background)] hover:opacity-90 border border-[var(--border)] rounded-lg py-2 px-3 text-xs font-semibold transition">Advance +5 simulated seconds</button>
+
+      <hr class="border-[var(--border)]" />
+
+      <div class="text-xs text-[var(--muted-foreground)] space-y-1">
+        <div class="font-semibold text-[var(--foreground)]">Source mechanism illustration</div>
+        <img src="assets/linear_axes_carrier.png" alt="AKUS Linear Axes Carrier" class="rounded-lg border border-[var(--border)] w-full mt-1" />
+      </div>
+
+      <p class="text-xs text-[var(--muted-foreground)] mt-auto pt-2 border-t border-[var(--border)]">
+        Important: no safety PLC, drives, I/O or real emergency stop are controlled from this app.
+      </p>
+    </aside>
+
+    <!-- RIGHT MAIN AREA -->
+    <main class="lg:col-span-9 flex flex-col gap-4">
+
+      <!-- HEADER -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div class="text-xs font-bold tracking-widest text-sky-400">INDUSTRIAL MOTION · OFFLINE DIGITAL TWIN</div>
+            <h2 class="text-xl font-bold mt-0.5">AKUS · Two-Axis Carrier Control</h2>
+            <p class="text-xs text-[var(--muted-foreground)]">TwinCAT-inspired HMI · positions / velocity / acceleration / model / tests / data</p>
+          </div>
+          <div id="msgBanner" class="text-xs px-3 py-1.5 rounded-lg bg-[var(--background)] border border-[var(--border)] text-[var(--muted-foreground)]">
+            Virtual bench initialized (OFFLINE, no EtherCAT/ADS writes)
+          </div>
+        </div>
+        <div id="faultBanner" class="hidden mt-3 px-3 py-2 rounded-lg bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold"></div>
+      </div>
+
+      <!-- 6 METRIC CARDS -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+          <div class="text-xs font-semibold text-[var(--muted-foreground)]">STATE</div>
+          <div id="mState" class="text-base font-bold mt-1">Init</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+          <div class="text-xs font-semibold text-[var(--muted-foreground)]">HEIGHT</div>
+          <div id="mHeight" class="text-base font-bold mt-1">0.0 mm</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+          <div class="text-xs font-semibold text-[var(--muted-foreground)]">VELOCITY</div>
+          <div id="mVel" class="text-base font-bold mt-1">0.00 mm/s</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+          <div class="text-xs font-semibold text-[var(--muted-foreground)]">ACCELERATION</div>
+          <div id="mAcc" class="text-base font-bold mt-1">1.000 g</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+          <div class="text-xs font-semibold text-[var(--muted-foreground)]">AXIS SKEW</div>
+          <div id="mSkew" class="text-base font-bold mt-1">0.0°</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+          <div class="text-xs font-semibold text-[var(--muted-foreground)]">TIME</div>
+          <div id="mTime" class="text-base font-bold mt-1">0.0 s</div>
+        </div>
+      </div>
+
+      <!-- LIVE MONITOR: SVG CARRIER + STATUS TABLE -->
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+        <div class="md:col-span-5 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 flex items-center justify-center">
+          <div id="svgContainer" class="w-full max-w-[360px]"></div>
+        </div>
+        <div class="md:col-span-7 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 overflow-x-auto">
+          <table class="w-full text-xs text-left border-collapse">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
+                <th class="py-2 px-2.5 font-semibold">Signal</th>
+                <th class="py-2 px-2.5 font-semibold">Value</th>
+              </tr>
+            </thead>
+            <tbody id="statusTableBody" class="divide-y divide-[var(--border)]"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TABS NAVIGATION -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
+        <div class="flex flex-wrap gap-1.5 border-b border-[var(--border)] pb-3 mb-4" id="tabButtons">
+          <button onclick="switchTab(0)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-600 text-white">Experiment</button>
+          <button onclick="switchTab(1)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Manual motion</button>
+          <button onclick="switchTab(2)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Controller tuning</button>
+          <button onclick="switchTab(3)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Identification</button>
+          <button onclick="switchTab(4)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Vacuum</button>
+          <button onclick="switchTab(5)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Analysis / Scopes</button>
+          <button onclick="switchTab(6)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Diagnostics</button>
+          <button onclick="switchTab(7)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Project reference</button>
+        </div>
+
+        <!-- TAB 0: EXPERIMENT -->
+        <div id="tab0" class="tab-pane space-y-4">
+          <div>
+            <h3 class="text-sm font-bold">Automatic acceleration experiment · Flug</h3>
+            <p class="text-xs text-[var(--muted-foreground)]">Calculation follows MAIN.TcPOU; the alternate total-time formula is corrected to the intended trapezoidal distance.</p>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold">Set acceleration [g]</label>
+              <input id="expG" type="number" step="0.0005" min="0.00001" max="5.0" value="0.001" oninput="updateExpPlan()" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              <label class="block text-xs font-semibold">Feedback control</label>
+              <select id="expMode" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="PositionBeckhoff">PositionBeckhoff</option>
+                <option value="Position">Position</option>
+                <option value="Acceleration">Acceleration</option>
+              </select>
+              <label class="block text-xs font-semibold">Time specification</label>
+              <select id="expDurMode" onchange="updateExpPlan()" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="acc">Acceleration time</option>
+                <option value="total">Total acceleration + braking time</option>
+              </select>
+            </div>
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold">Requested duration [s]</label>
+              <input id="expT" type="number" step="0.1" min="0.01" max="60" value="3.0" oninput="updateExpPlan()" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              <label class="block text-xs font-semibold">Trigger delay [s]</label>
+              <input id="expDelay" type="number" step="0.1" min="0" max="10" value="0.0" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              <label class="block text-xs font-semibold">Brake/lock duration [s]</label>
+              <input id="expLock" type="number" step="0.5" min="0" max="20" value="8.0" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div class="space-y-3 flex flex-col justify-between">
+              <div class="space-y-2">
+                <label class="flex items-center gap-2 text-xs cursor-pointer">
+                  <input id="expReturn" type="checkbox" checked class="accent-sky-500" />
+                  <span>Return automatically to start</span>
+                </label>
+                <p class="text-xs text-[var(--muted-foreground)]"><b>Travel guard:</b> motion must remain below 44000° - 720° (601.11 mm).</p>
+                <p class="text-xs text-[var(--muted-foreground)]"><b>Elevator guard:</b> total motion duration ≤ 3.6 s.</p>
+              </div>
+              <button onclick="runExperiment()" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg text-xs transition">▶ Start simulated experiment</button>
+            </div>
+          </div>
+
+          <div id="expPlanMetrics" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2"></div>
+
+          <hr class="border-[var(--border)]" />
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="space-y-2">
+              <h4 class="text-xs font-bold uppercase tracking-wider text-sky-400">Referencing / initialization</h4>
+              <select id="homingMode" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="beckhoff">Beckhoff NC · SyncPos (20–25)</option>
+                <option value="custom">Custom cascade · SyncPosTorque (1–11)</option>
+              </select>
+              <button onclick="invoke('start_homing', document.getElementById('homingMode').value === 'beckhoff')" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-3 rounded-lg text-xs transition">Home both axes (simulation)</button>
+            </div>
+            <div class="space-y-2">
+              <h4 class="text-xs font-bold uppercase tracking-wider text-sky-400">Start position</h4>
+              <p class="text-xs text-[var(--muted-foreground)]">The original procedure searches the upper limit, assigns 44,000°, then returns to 0°.</p>
+              <button onclick="invoke('move_to_start')" class="w-full bg-[var(--background)] border border-[var(--border)] hover:opacity-90 font-semibold py-2 px-3 rounded-lg text-xs transition">Move carrier to 0 mm</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 1: MANUAL MOTION -->
+        <div id="tab1" class="tab-pane hidden space-y-4">
+          <div>
+            <h3 class="text-sm font-bold">Manual operation · Einzelbewegung / Jog</h3>
+            <p class="text-xs text-[var(--muted-foreground)]">Position commands use the original motor-degree convention: 360° motor rotation = 5 mm travel.</p>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label class="block text-xs font-semibold mb-1">Target carrier position [mm]</label>
+              <input id="manPos" type="number" min="0" max="601.1" step="5" value="100" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Velocity [°/s]</label>
+              <input id="manVel" type="number" min="1" max="40000" step="100" value="2800" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Motion backend</label>
+              <select id="manCtrl" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="SyncPos">SyncPos</option>
+                <option value="SyncPosTorque">SyncPosTorque</option>
+                <option value="SyncVel">SyncVel</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Acceleration [°/s²]</label>
+              <input id="manAcc" type="number" min="1" max="100000" value="400" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Deceleration [°/s²]</label>
+              <input id="manDec" type="number" min="1" max="100000" value="500" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div class="flex items-end">
+              <button onclick="runManualMove()" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-3 rounded-lg text-xs transition">▶ Move to position</button>
+            </div>
+          </div>
+
+          <hr class="border-[var(--border)]" />
+
+          <div>
+            <h4 class="text-xs font-bold uppercase tracking-wider text-sky-400 mb-2">Bounded timed jog</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-semibold mb-1">Jog velocity [°/s]</label>
+                <input id="jogVel" type="number" min="1" value="700" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold mb-1">Jog duration [s]</label>
+                <input id="jogDur" type="number" min="0.05" max="20" step="0.25" value="1.0" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              </div>
+              <div class="flex items-end gap-2">
+                <button onclick="runJog(1)" class="flex-1 bg-[var(--background)] border border-[var(--border)] font-semibold py-2 px-3 rounded-lg text-xs">↑ Jog up</button>
+                <button onclick="runJog(-1)" class="flex-1 bg-[var(--background)] border border-[var(--border)] font-semibold py-2 px-3 rounded-lg text-xs">↓ Jog down</button>
+              </div>
+            </div>
+          </div>
+
+          <hr class="border-[var(--border)]" />
+
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <span class="font-semibold">Inject Axis 2 position offset [°] (visual-only)</span>
+              <span id="skewSliderVal" class="font-bold text-sky-400">0°</span>
+            </div>
+            <input id="skewSlider" type="range" min="-50" max="50" step="1" value="0" oninput="onSkewInput(this.value)" class="w-full accent-sky-500" />
+            <p id="skewWarn" class="hidden text-xs text-amber-400 font-semibold mt-1">⚠ Simulated axis mismatch exceeds GVL position synchronization tolerance (40°).</p>
+          </div>
+        </div>
+
+        <!-- TAB 2: CONTROLLER TUNING -->
+        <div id="tab2" class="tab-pane hidden space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-bold">ControlConfig · PID + mechanical plant parameters</h3>
+              <p class="text-xs text-[var(--muted-foreground)]">Initial values from GVL_Persist.TcGVL. Tuning affects Dynamic force model only.</p>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="exportParamsJSON()" class="bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs font-semibold">Export JSON</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold mb-1">Parameter group</label>
+            <select id="paramGroupSelect" onchange="renderParamEditor()" class="bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs">
+              <option value="Position cascade">Position cascade</option>
+              <option value="Acceleration cascade">Acceleration cascade</option>
+              <option value="Torque limits">Torque limits</option>
+              <option value="Plant physics">Plant physics</option>
+              <option value="Acceleration calibration">Acceleration calibration</option>
+              <option value="Offline-only feedback assumptions">Offline-only feedback assumptions</option>
+            </select>
+          </div>
+          <div id="paramEditorGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"></div>
+          <button onclick="applyParams()" class="bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg text-xs">Apply parameter changes</button>
+
+          <hr class="border-[var(--border)]" />
+
+          <div>
+            <h4 class="text-xs font-bold uppercase tracking-wider text-sky-400 mb-2">Simulate controller response / configuration test</h4>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div>
+                <label class="block text-xs font-semibold mb-1">Start [mm]</label>
+                <input id="ctStart" type="number" value="550" min="0" max="600" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold mb-1">End [mm]</label>
+                <input id="ctEnd" type="number" value="50" min="0" max="600" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold mb-1">Velocity [°/s]</label>
+                <input id="ctVel" type="number" value="2000" min="1" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold mb-1">Acceleration [°/s²]</label>
+                <input id="ctAcc" type="number" value="1000" min="1" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              </div>
+              <div class="flex items-end">
+                <button onclick="runControlTest()" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-3 rounded-lg text-xs">▶ Run test</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: IDENTIFICATION -->
+        <div id="tab3" class="tab-pane hidden space-y-4">
+          <div>
+            <h3 class="text-sm font-bold">Parameter identification · IdentTrajectory</h3>
+            <p class="text-xs text-[var(--muted-foreground)]">Moves to start, records an excitation trajectory, returns to start and supports CSV export.</p>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div>
+              <label class="block text-xs font-semibold mb-1">Start [mm]</label>
+              <input id="idStart" type="number" value="50" min="0" max="600" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">End [mm]</label>
+              <input id="idEnd" type="number" value="500" min="0" max="600" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Velocity [°/s]</label>
+              <input id="idVel" type="number" value="2400" min="1" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold mb-1">Acceleration [°/s²]</label>
+              <input id="idAcc" type="number" value="1500" min="1" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div class="flex items-end">
+              <button onclick="runIdentification()" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-3 rounded-lg text-xs">▶ Run identification</button>
+            </div>
+          </div>
+          <div class="bg-[var(--background)] border border-[var(--border)] rounded-xl p-3 font-mono text-xs space-y-1 text-sky-300">
+            <div>F_motor = (T₁ + T₂) · (2π / h),   F_drive = F_motor − m_p · g</div>
+            <div>F_friction = sgn(F_drive) · [ B_c + B_z · (z − z₀)² ] + B_v · ż</div>
+            <div>z̈ = (F_drive − F_friction) / (m_ers + m_p)</div>
+          </div>
+        </div>
+
+        <!-- TAB 4: VACUUM -->
+        <div id="tab4" class="tab-pane hidden space-y-4">
+          <div>
+            <h3 class="text-sm font-bold">Vacuum test panel · Ventilsteuerung</h3>
+            <p class="text-xs text-[var(--muted-foreground)]">Offline signal-state panel based on MAIN vacuum I/O symbols. No pump, valve, or pressure sensor is connected.</p>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="space-y-2 bg-[var(--background)] border border-[var(--border)] rounded-xl p-3">
+              <label class="flex items-center gap-2 text-xs cursor-pointer"><input id="vacTurbo" type="checkbox" onchange="updateVacuum()" class="accent-sky-500" /><span>Turbo pump (bTurboPump)</span></label>
+              <label class="flex items-center gap-2 text-xs cursor-pointer"><input id="vacDiaphragmPump" type="checkbox" onchange="updateVacuum()" class="accent-sky-500" /><span>Diaphragm pump (bDiaphragmPump)</span></label>
+              <label class="flex items-center gap-2 text-xs cursor-pointer"><input id="vacBig" type="checkbox" onchange="updateVacuum()" class="accent-sky-500" /><span>Big valve (bBigValve)</span></label>
+              <label class="flex items-center gap-2 text-xs cursor-pointer"><input id="vacNormal" type="checkbox" onchange="updateVacuum()" class="accent-sky-500" /><span>Normal valve (bNormalValve)</span></label>
+              <label class="flex items-center gap-2 text-xs cursor-pointer"><input id="vacDiaphragmValve" type="checkbox" onchange="updateVacuum()" class="accent-sky-500" /><span>Diaphragm valve (bDiaphragmValve)</span></label>
+            </div>
+            <div class="bg-[var(--background)] border border-[var(--border)] rounded-xl p-3">
+              <table class="w-full text-xs text-left">
+                <thead><tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]"><th class="py-1">Sensor</th><th class="py-1">State</th></tr></thead>
+                <tbody id="vacTableBody" class="divide-y divide-[var(--border)]"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 5: ANALYSIS / SCOPES -->
+        <div id="tab5" class="tab-pane hidden space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-bold">Measurement &amp; analysis · TwinCAT Scope equivalents</h3>
+              <p class="text-xs text-[var(--muted-foreground)]">Live multi-channel recorder for Position, Velocity, Acceleration, and Motor Torque.</p>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="exportCSV()" class="bg-sky-600 hover:bg-sky-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold">Export CSV</button>
+              <button onclick="invoke('clear_history')" class="bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs font-semibold">Clear history</button>
+            </div>
+          </div>
+          <canvas id="scopeCanvas" width="980" height="360" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
+        </div>
+
+        <!-- TAB 6: DIAGNOSTICS -->
+        <div id="tab6" class="tab-pane hidden space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold">Diagnostics &amp; Event Log</h3>
+            <button onclick="exportEventsJSON()" class="bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs font-semibold">Export Events JSON</button>
+          </div>
+          <div class="max-h-64 overflow-y-auto bg-[var(--background)] border border-[var(--border)] rounded-xl p-3">
+            <table class="w-full text-xs text-left">
+              <thead><tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]"><th class="py-1.5 w-24">Time [s]</th><th class="py-1.5">Event</th></tr></thead>
+              <tbody id="eventLogBody" class="divide-y divide-[var(--border)]"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- TAB 7: PROJECT REFERENCE -->
+        <div id="tab7" class="tab-pane hidden space-y-3">
+          <h3 class="text-sm font-bold">Source-to-dashboard coverage &amp; constants</h3>
+          <div class="bg-[var(--background)] border border-[var(--border)] rounded-xl p-3 font-mono text-xs space-y-1">
+            <div>1 motor revolution = 360° = 5 mm carrier travel</div>
+            <div>44,000° = 611.11 mm simulated upper limit</div>
+            <div>Experiment travel guard = 43,280° = 601.11 mm</div>
+            <div>Nominal gravitation = 9.80665 m/s²</div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const LEAD_M = 0.005;
+    const DEG_TO_M = LEAD_M / 360.0;
+    const GRAVITY = 9.80665;
+    const TOP_DEG = 44000.0;
+    const NORMAL_TOP_DEG = TOP_DEG - 720.0;
+    const HOME_VEL = 700.0;
+    const HOME_RETURN_VEL = 4 * HOME_VEL;
+    const MAX_DEC = 20000.0;
+    const OP_MODES = { SyncAccTorque: 6, SyncPosTorque: 7, SyncPos: 8, SyncVel: 9, SyncTorq: 10, SyncTorqComm: 11 };
+
+    class Trajectory {
+      constructor(start, target, vel, acc, dec, ta, tf, td, vpk, sign, kind = 'move') {
+        this.start_deg = start; this.target_deg = target;
+        this.velocity_deg_s = vel; this.acceleration_deg_s2 = acc; this.deceleration_deg_s2 = dec;
+        this.t_acc = ta; this.t_flat = tf; this.t_dec = td;
+        this.v_peak = vpk; this.sign = sign; this.elapsed = 0.0; this.kind = kind;
+      }
+      static make(start, target, vel, acc, dec, kind = 'move') {
+        if (vel <= 0 || acc <= 0 || dec <= 0) throw new Error('Velocity, acceleration and deceleration must be > 0');
+        const delta = target - start;
+        const sign = delta >= 0 ? 1 : -1;
+        const length = Math.abs(delta);
+        const v_tri = Math.sqrt(Math.max(0, 2 * length * acc * dec / (acc + dec)));
+        const vpk = Math.min(vel, v_tri);
+        const ta = vpk / acc;
+        const td = vpk / dec;
+        const ds = 0.5 * vpk * ta + 0.5 * vpk * td;
+        const tf = vpk > 0 ? Math.max(0.0, (length - ds) / vpk) : 0.0;
+        return new Trajectory(start, target, vel, acc, dec, ta, tf, td, vpk, sign, kind);
+      }
+      get duration() { return this.t_acc + this.t_flat + this.t_dec; }
+      sample(t) {
+        if (t >= this.duration || this.duration < 1e-12) return [this.target_deg, 0.0, 0.0];
+        if (t <= 0) return [this.start_deg, 0.0, 0.0];
+        const a = this.acceleration_deg_s2, d = this.deceleration_deg_s2, v = this.v_peak;
+        let distance, vel, acc;
+        if (t < this.t_acc) {
+          distance = 0.5 * a * t * t; vel = a * t; acc = a;
+        } else if (t < this.t_acc + this.t_flat) {
+          const td = t - this.t_acc;
+          distance = 0.5 * v * this.t_acc + v * td; vel = v; acc = 0.0;
+        } else {
+          const td = t - this.t_acc - this.t_flat;
+          distance = 0.5 * v * this.t_acc + v * this.t_flat + v * td - 0.5 * d * td * td;
+          vel = Math.max(0.0, v - d * td); acc = -d;
+        }
+        return [this.start_deg + this.sign * distance, this.sign * vel, this.sign * acc];
+      }
+    }
+
+    class Simulator {
+      constructor() {
+        this.config = {
+          pos_outer_kp: 10.0, pos_outer_tn: 0.0, pos_outer_tv: 0.0,
+          pos_inner_kp: 0.582, pos_inner_tn: 0.015, pos_inner_tv: 0.0,
+          pos_inner_limit_up: 100.0, pos_inner_limit_low: -100.0,
+          acc_outer_kp: 10.0, acc_outer_tn: 0.0, acc_outer_tv: 0.0,
+          acc_inner_kp: 0.582, acc_inner_tn: 0.015, acc_inner_tv: 0.0,
+          acc_inner_limit_up: 100.0, acc_inner_limit_low: -100.0,
+          torque_ramp: 1000.0, velocity_limit_added: 0.1, acceleration_limit_added: 0.1,
+          m_equivalent_kg: 4154.59, m_platform_kg: 17.395,
+          friction_coulomb_n: 225.059, friction_viscous_ns_m: 3994.857,
+          friction_position_n_m2: 1207.7, friction_center_m: 0.249715,
+          acc_gradient: 1.0, acc_offset_g: 0.0,
+          max_motor_torque_nm: 2.5, simulated_position_kp_s2: 13.0, simulated_velocity_kp_s: 11.0
+        };
+        this.t_s = 0.0; this.pos_deg = 0.0; this.vel_deg_s = 0.0; this.acc_deg_s2 = 0.0;
+        this.torque1_nm = 0.0; this.torque2_nm = 0.0;
+        this.set_pos_deg = 0.0; this.set_vel_deg_s = 0.0; this.set_acc_deg_s2 = 0.0;
+        this.state = 'Init'; this.phase = 'Unreferenced'; this.op_mode = 'SyncPos';
+        this.simulation_type = 'Ideal NC trajectory';
+        this.homed = false; this.enabled = false; this.running = false; this.e_stop = false;
+        this.fault = ''; this.in_elevator = false; this.camera_on = false; this.recording = false;
+        this.current = null; this.operation = ''; this.next_step = ''; this.wait_until = 0.0;
+        this.offset2_deg = 0.0;
+        this.history = []; this.events = [];
+        this.pump_turbo = false; this.pump_diaphragm = false;
+        this.valve_big = false; this.valve_normal = false; this.valve_diaphragm = false;
+        this._last_log = -1000.0;
+        this.event('Virtual bench initialized (OFFLINE, no EtherCAT/ADS writes)');
+        this.log(true);
+      }
+      get pos_mm() { return this.pos_deg * 5.0 / 360.0; }
+      get pos2_deg() { return this.pos_deg + this.offset2_deg; }
+      get vel_mm_s() { return this.vel_deg_s * 5.0 / 360.0; }
+      get acc_ms2() { return this.acc_deg_s2 * DEG_TO_M; }
+      get acc_g() { return this.acc_ms2 / GRAVITY + (this.in_elevator ? 0.0 : 1.0) + this.config.acc_offset_g; }
+      get switch_top_nc() { return this.pos_deg < TOP_DEG - 1e-6; }
+
+      event(msg) {
+        this.events.push({ time_s: Number(this.t_s.toFixed(3)), event: msg });
+        if (this.events.length > 500) this.events.shift();
+      }
+      log(force = false) {
+        if (force || this.t_s - this._last_log >= 0.05 - 1e-8) {
+          this.history.push({
+            time_s: Number(this.t_s.toFixed(3)),
+            pos_mm: this.pos_mm, vel_mm_s: this.vel_mm_s, acc_g: this.acc_g,
+            torque1_nm: this.torque1_nm, pos1_deg: this.pos_deg, set_pos_deg: this.set_pos_deg
+          });
+          this._last_log = this.t_s;
+          if (this.history.length > 4000) this.history.shift();
+        }
+      }
+      clear_history() {
+        this.history = []; this._last_log = -1000; this.log(true);
+        this.event('Measurement history cleared');
+      }
+      _require_ready() {
+        if (this.e_stop || this.state === 'Error') throw new Error('Fault latched. Reset first, then home the axes.');
+        if (!this.homed || this.state !== 'Ready') throw new Error('Homing required; controller must be READY.');
+        if (this.current || this.operation) throw new Error('Another movement is in progress.');
+      }
+      reset() {
+        if (this.running) throw new Error('Stop motion before resetting the virtual controller.');
+        this.e_stop = false; this.fault = ''; this.state = 'Init'; this.phase = 'Unreferenced';
+        this.homed = false; this.enabled = false; this.current = null; this.operation = '';
+        this.camera_on = false; this.recording = false; this.vel_deg_s = 0.0; this.acc_deg_s2 = 0.0;
+        this.event('Faults reset; referencing required'); this.log(true);
+      }
+      emergency_stop() {
+        this.e_stop = true; this.fault = 'Virtual emergency stop'; this.state = 'Error';
+        this.phase = 'E-STOP latched'; this.running = false; this.enabled = false;
+        this.current = null; this.operation = ''; this.vel_deg_s = 0.0; this.acc_deg_s2 = 0.0;
+        this.torque1_nm = this.torque2_nm = 0.0; this.recording = this.camera_on = false;
+        this.event('VIRTUAL E-STOP pressed (not a physical safety stop)'); this.log(true);
+      }
+      stop() {
+        if (this.e_stop) return;
+        this.current = null; this.operation = ''; this.next_step = '';
+        this.vel_deg_s = 0.0; this.acc_deg_s2 = 0.0; this.set_pos_deg = this.pos_deg;
+        this.recording = this.camera_on = false;
+        this.state = this.homed ? 'Ready' : 'Init';
+        this.phase = 'Stopped by operator'; this.running = false;
+        this.event('Virtual controlled stop'); this.log(true);
+      }
+      _motion(target_deg, velocity, acceleration, deceleration, kind) {
+        const upper = kind === 'homing-search' ? TOP_DEG : NORMAL_TOP_DEG;
+        if (target_deg < 0 || target_deg > upper) {
+          throw new Error(`Commanded position ${target_deg.toFixed(1)}° outside simulated [0, ${upper.toFixed(0)}°] bounds`);
+        }
+        this.current = Trajectory.make(this.pos_deg, target_deg, Math.abs(velocity), Math.abs(acceleration), Math.abs(deceleration), kind);
+        this.set_pos_deg = target_deg; this.enabled = true; this.running = this.current.duration > 0;
+        this.event(`${kind}: ${this.pos_deg.toFixed(1)}° → ${target_deg.toFixed(1)}° @ ${velocity.toFixed(0)}°/s`);
+      }
+      start_homing(beckhoff = true) {
+        if (this.e_stop) throw new Error('Reset fault before homing');
+        if (this.current || this.operation) throw new Error('Stop existing movement first');
+        this.state = 'Init'; this.homed = false; this.operation = 'homing';
+        this.op_mode = beckhoff ? 'SyncPos' : 'SyncPosTorque';
+        this.phase = beckhoff ? '21 Enable / 22-23 upward search' : '3-5 torque search';
+        this._motion(TOP_DEG, HOME_VEL, 200.0, 10000.0, 'homing-search');
+      }
+      move_absolute(position_mm, velocity_deg_s = 2800.0, acceleration_deg_s2 = 400.0, deceleration_deg_s2 = 500.0, controller = 'SyncPos') {
+        this._require_ready();
+        if (position_mm < 0 || position_mm * 72 > NORMAL_TOP_DEG) throw new Error('Target is outside normal soft travel bounds');
+        this.op_mode = controller; this.state = 'Moving'; this.phase = 'Manual positioning'; this.operation = 'manual';
+        this._motion(position_mm * 72.0, velocity_deg_s, acceleration_deg_s2, deceleration_deg_s2, 'manual-absolute');
+      }
+      jog_for(direction, duration_s, velocity_deg_s) {
+        this._require_ready();
+        const distance = direction * velocity_deg_s * duration_s;
+        const target = Math.min(NORMAL_TOP_DEG, Math.max(0, this.pos_deg + distance));
+        if (Math.abs(target - this.pos_deg) < 1e-8) throw new Error('Jog would violate a position boundary');
+        this.state = 'Moving'; this.phase = 'Timed jog'; this.operation = 'manual';
+        this._motion(target, velocity_deg_s, 10000.0, 10000.0, 'jog');
+      }
+      move_to_start() {
+        this._require_ready();
+        this.state = 'ToStart'; this.phase = 'Return to start'; this.operation = 'to_start'; this.op_mode = 'SyncPos';
+        this._motion(0.0, HOME_RETURN_VEL, 200.0, 100.0, 'to-start');
+      }
+      experiment_plan(acceleration_g, acc_time_s, total_duration_s = null) {
+        if (acceleration_g <= 0 || !Number.isFinite(acceleration_g)) throw new Error('Positive acceleration in g required');
+        const a = acceleration_g * GRAVITY / DEG_TO_M;
+        if (total_duration_s !== null) {
+          const vmax = total_duration_s * a * MAX_DEC / (a + MAX_DEC);
+          acc_time_s = vmax / a;
+        }
+        const vmax = a * acc_time_s;
+        const dec_time = vmax / MAX_DEC;
+        const distance = 0.5 * a * acc_time_s * acc_time_s + 0.5 * MAX_DEC * dec_time * dec_time;
+        return {
+          a_deg_s2: a, v_peak_deg_s: vmax, t_acc_s: acc_time_s, t_dec_s: dec_time,
+          total_duration_s: acc_time_s + dec_time, distance_deg: distance, distance_mm: distance * 5 / 360,
+          max_dec_deg_s2: MAX_DEC
+        };
+      }
+      start_experiment(acceleration_g, acc_time_s, mode = 'PositionBeckhoff', total_duration_s = null, delay_s = 0.0, lock_s = 8.0, return_to_start = true) {
+        this._require_ready();
+        const plan = this.experiment_plan(acceleration_g, acc_time_s, total_duration_s);
+        const target = this.pos_deg + plan.distance_deg;
+        if (target > NORMAL_TOP_DEG) throw new Error(`Insufficient stroke. Need ${plan.distance_mm.toFixed(1)} mm; max is ${(NORMAL_TOP_DEG * 5 / 360).toFixed(1)} mm`);
+        if (this.in_elevator && plan.total_duration_s > 3.6) throw new Error('TwinCAT fMaxDurElevator exceeded: 3.6 s');
+        this.op_mode = { Position: 'SyncPosTorque', PositionBeckhoff: 'SyncPos', Acceleration: 'SyncAccTorque' }[mode];
+        this.state = 'Moving'; this.operation = 'experiment';
+        this.phase = delay_s > 0 ? 'Trigger delay' : 'Experiment upward trajectory';
+        this._exp_params = { target, plan, lock_s: Math.max(0, lock_s), return_to_start };
+        this.camera_on = true; this.recording = true;
+        if (delay_s > 0) {
+          this.wait_until = this.t_s + delay_s; this.next_step = 'experiment-up'; this.running = true;
+        } else {
+          this._exp_up();
+        }
+      }
+      _exp_up() {
+        const { target, plan } = this._exp_params;
+        this.phase = 'Experiment upward trajectory';
+        this._motion(target, plan.v_peak_deg_s, plan.a_deg_s2, plan.max_dec_deg_s2, 'experiment-up');
+      }
+      start_identification(start_mm, end_mm, velocity_deg_s, acceleration_deg_s2) {
+        this._require_ready();
+        if (start_mm === end_mm) throw new Error('Identification needs nonzero displacement');
+        this.operation = 'identification'; this.state = 'Ident'; this.phase = 'To identification start';
+        this._ident_params = { s: start_mm * 72, e: end_mm * 72, v: velocity_deg_s, a: acceleration_deg_s2 };
+        this._motion(start_mm * 72, velocity_deg_s, acceleration_deg_s2, acceleration_deg_s2, 'ident-to-start');
+      }
+      start_control_test(start_mm, end_mm, velocity_deg_s, acceleration_deg_s2) {
+        this._require_ready();
+        this.operation = 'control_test'; this.state = 'CtrlConfig'; this.phase = 'Control test: initial position';
+        this._test_params = { s: start_mm * 72, e: end_mm * 72, v: velocity_deg_s, a: acceleration_deg_s2 };
+        this._motion(start_mm * 72, velocity_deg_s, acceleration_deg_s2, acceleration_deg_s2, 'control-test-to-start');
+      }
+      _sample_torque(desired_a, desired_v) {
+        const cfg = this.config;
+        const z = this.pos_deg * DEG_TO_M, v = this.vel_deg_s * DEG_TO_M;
+        let force = (cfg.m_equivalent_kg + cfg.m_platform_kg) * desired_a * DEG_TO_M;
+        if (!this.in_elevator) force += cfg.m_platform_kg * GRAVITY;
+        const dir = (desired_v > 0 || (desired_v === 0 && desired_a > 0)) ? 1 : ((desired_v < 0 || desired_a < 0) ? -1 : 0);
+        force += dir * (cfg.friction_coulomb_n + cfg.friction_position_n_m2 * Math.pow(z - cfg.friction_center_m, 2));
+        force += cfg.friction_viscous_ns_m * v;
+        const tau = force * LEAD_M / (4 * Math.PI);
+        return [tau, tau];
+      }
+      _dynamic_step(dt, p_des, v_des, a_des) {
+        const c = this.config;
+        const z = this.pos_deg * DEG_TO_M, v = this.vel_deg_s * DEG_TO_M;
+        const dp = p_des * DEG_TO_M, dv = v_des * DEG_TO_M, da = a_des * DEG_TO_M;
+        const cmd_acc = da + c.simulated_position_kp_s2 * (dp - z) + c.simulated_velocity_kp_s * (dv - v);
+        const mass = c.m_equivalent_kg + c.m_platform_kg;
+        const dir = dv > 0 ? 1 : (dv < 0 ? -1 : (cmd_acc > 0 ? 1 : (cmd_acc < 0 ? -1 : 0)));
+        const coulomb = c.friction_coulomb_n + c.friction_position_n_m2 * Math.pow(z - c.friction_center_m, 2);
+        const gravity = this.in_elevator ? 0.0 : c.m_platform_kg * GRAVITY;
+        const force_cmd = mass * cmd_acc + gravity + dir * coulomb + c.friction_viscous_ns_m * v;
+        const tau = Math.min(c.max_motor_torque_nm, Math.max(-c.max_motor_torque_nm, force_cmd * LEAD_M / (4 * Math.PI)));
+        const driving = 2 * tau * 2 * Math.PI / LEAD_M - gravity;
+        const friction = (driving > 0 ? coulomb : (driving < 0 ? -coulomb : 0)) + c.friction_viscous_ns_m * v;
+        const residual = (Math.abs(driving) < Math.abs(friction) && Math.abs(v) < 1e-5) ? 0.0 : driving - friction;
+        this.acc_deg_s2 = residual / mass / DEG_TO_M;
+        this.vel_deg_s += this.acc_deg_s2 * dt;
+        this.pos_deg += this.vel_deg_s * dt;
+        this.torque1_nm = this.torque2_nm = tau;
+      }
+      _on_motion_done(kind) {
+        this.vel_deg_s = this.acc_deg_s2 = 0.0; this.set_pos_deg = this.pos_deg; this.running = false;
+        this.event(`${kind} complete at ${this.pos_mm.toFixed(2)} mm`);
+        if (this.operation === 'homing') {
+          if (kind === 'homing-search') {
+            this.pos_deg = TOP_DEG;
+            this.event('Top limit detected; position set to 44000°');
+            this.phase = '25 Return to starting position';
+            this._motion(0.0, HOME_RETURN_VEL, 200, 100, 'homing-return');
+          } else {
+            this.operation = ''; this.homed = true; this.state = 'Ready';
+            this.phase = 'Referenced / READY'; this.event('Reference cycle complete; both axes READY');
+          }
+        } else if (this.operation === 'experiment') {
+          if (kind === 'experiment-up') {
+            this.phase = 'Lock after acceleration';
+            const { lock_s, return_to_start } = this._exp_params;
+            this.wait_until = this.t_s + lock_s;
+            this.next_step = return_to_start ? 'experiment-return' : 'experiment-end';
+            this.running = true;
+          } else if (kind === 'experiment-return') {
+            this.operation = ''; this.recording = false; this.camera_on = false;
+            this.state = 'Ready'; this.phase = 'Experiment complete';
+            this.event('Experiment complete; record export available');
+          }
+        } else if (this.operation === 'identification') {
+          const { s, e, v, a } = this._ident_params;
+          if (kind === 'ident-to-start') {
+            this.phase = 'Identification measurement'; this.recording = true;
+            this._motion(e, v, a, a, 'ident-measure');
+          } else if (kind === 'ident-measure') {
+            this.recording = false; this.phase = 'Identification return';
+            this._motion(s, v, a, a, 'ident-return');
+          } else {
+            this.operation = ''; this.state = 'Ready'; this.phase = 'Identification completed';
+            this.event('Identification sequence done');
+          }
+        } else if (this.operation === 'control_test') {
+          const { e, v, a } = this._test_params;
+          if (kind === 'control-test-to-start') {
+            this.phase = 'Controller response test'; this.recording = true;
+            this._motion(e, v, a, a, 'control-test-measure');
+          } else {
+            this.recording = false; this.operation = ''; this.state = 'Ready';
+            this.phase = 'Controller test done'; this.event('Controller response test completed');
+          }
+        } else {
+          this.operation = ''; this.state = this.homed ? 'Ready' : 'Init'; this.phase = 'Movement completed';
+        }
+      }
+      step(dt) {
+        if (dt <= 0) return;
+        const n = Math.max(1, Math.ceil(dt / 0.025));
+        const h = dt / n;
+        for (let i = 0; i < n; i++) {
+          this.t_s += h;
+          if (this.e_stop) { this.log(); continue; }
+          if (this.current) {
+            const m = this.current;
+            m.elapsed = Math.min(m.elapsed + h, m.duration);
+            const [p, v, a] = m.sample(m.elapsed);
+            this.set_pos_deg = p; this.set_vel_deg_s = v; this.set_acc_deg_s2 = a;
+            if (this.simulation_type === 'Dynamic force model') {
+              this._dynamic_step(h, p, v, a);
+            } else {
+              this.pos_deg = p; this.vel_deg_s = v; this.acc_deg_s2 = a;
+              [this.torque1_nm, this.torque2_nm] = this._sample_torque(a, v);
+            }
+            if (m.elapsed >= m.duration) {
+              this.pos_deg = m.target_deg; this.vel_deg_s = this.acc_deg_s2 = 0.0;
+              this.current = null; this._on_motion_done(m.kind);
+            }
+          } else if (this.next_step && this.t_s >= this.wait_until) {
+            const action = this.next_step; this.next_step = '';
+            if (action === 'experiment-up') this._exp_up();
+            else if (action === 'experiment-return') {
+              this.phase = 'Automatic experiment return'; this.op_mode = 'SyncPosTorque';
+              this._motion(0.0, 3 * HOME_VEL, 400, 500, 'experiment-return');
+            } else if (action === 'experiment-end') {
+              this.operation = ''; this.recording = false; this.camera_on = false;
+              this.state = 'Ready'; this.phase = 'Experiment complete';
+            }
+          }
+          this.log();
+        }
+      }
+      fast_forward(s) { this.step(Number(s)); }
+      finish_operation(max_s = 300.0) {
+        let elapsed = 0;
+        while ((this.current !== null || this.next_step || this.running || this.operation) && elapsed < max_s) {
+          this.step(0.1); elapsed += 0.1;
+        }
+      }
+    }
+
+    const sim = new Simulator();
+
+    function carrierSVG(position_mm, skew = 0) {
+      const top_mm = TOP_DEG * 5 / 360;
+      const pos_ratio = Math.min(1, Math.max(0, position_mm / top_mm));
+      const y_top = 42, y_bottom = 395;
+      const y = y_bottom - pos_ratio * (y_bottom - y_top);
+      const y_right = y - Math.max(-17, Math.min(17, skew / 3));
+      let gridLines = '';
+      for (let i = 52; i < 415; i += 45) {
+        gridLines += `<line x1="130" x2="342" y1="${i}" y2="${i}" stroke="#8ba5b9" stroke-dasharray="5 7"/>`;
+      }
+      return `<svg width="100%" viewBox="0 0 475 472" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="steel" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#72879b"/><stop offset=".52" stop-color="#e2e8ee"/><stop offset="1" stop-color="#6e839a"/></linearGradient>
+          <linearGradient id="pl" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#92cced"/><stop offset="1" stop-color="#2f5875"/></linearGradient>
+        </defs>
+        <rect x="65" y="17" width="342" height="430" rx="15" fill="#101b2a" stroke="#2c455d"/>
+        <rect x="98" y="24" width="20" height="402" rx="4" fill="url(#steel)"/>
+        <rect x="354" y="24" width="20" height="402" rx="4" fill="url(#steel)"/>
+        <line x1="130" x2="130" y1="32" y2="419" stroke="#cba43b" stroke-width="8"/>
+        <line x1="342" x2="342" y1="32" y2="419" stroke="#cba43b" stroke-width="8"/>
+        <g opacity=".2">${gridLines}</g>
+        <rect x="99" y="28" width="18" height="13" rx="2" fill="${sim.switch_top_nc ? '#6fe1a2' : '#ffbb66'}"/>
+        <rect x="355" y="28" width="18" height="13" rx="2" fill="${sim.switch_top_nc ? '#6fe1a2' : '#ffbb66'}"/>
+        <rect x="99" y="410" width="18" height="16" rx="2" fill="#c87979"/>
+        <rect x="355" y="410" width="18" height="16" rx="2" fill="#c87979"/>
+        <g>
+          <rect x="109" y="${(y - 17).toFixed(1)}" width="32" height="35" rx="4" fill="#c8dae5"/>
+          <rect x="330" y="${(y_right - 17).toFixed(1)}" width="32" height="35" rx="4" fill="#c8dae5"/>
+          <path d="M141 ${(y - 9).toFixed(1)} L330 ${(y_right - 9).toFixed(1)} L330 ${(y_right + 9).toFixed(1)} L141 ${(y + 9).toFixed(1)}Z" fill="url(#pl)" stroke="#b2e7f7" stroke-width="2"/>
+          <path d="M209 ${(y - 9).toFixed(1)} L209 ${(y - 55).toFixed(1)} Q236 ${(y - 73).toFixed(1)} 265 ${(y - 55).toFixed(1)} L265 ${(y_right - 9).toFixed(1)}" fill="#8fa7b8" stroke="#d6edf6" stroke-width="2"/>
+          <rect x="190" y="${(y + 10).toFixed(1)}" width="90" height="14" rx="3" fill="#829cad"/>
+          <circle cx="237" cy="${(y - 31).toFixed(1)}" r="6" fill="#df6d56"/>
+        </g>
+        <g>
+          <rect x="91" y="431" width="34" height="24" rx="5" fill="#223b60" stroke="#477ec0"/>
+          <rect x="348" y="431" width="34" height="24" rx="5" fill="#223b60" stroke="#477ec0"/>
+          <text x="108" y="448" font-size="11" text-anchor="middle" fill="white">M1</text>
+          <text x="365" y="448" font-size="11" text-anchor="middle" fill="white">M2</text>
+        </g>
+        <text x="386" y="32" font-size="11" fill="#8da2ba">TOP</text>
+        <text x="386" y="419" font-size="11" fill="#8da2ba">START</text>
+        <line x1="412" x2="412" y1="39" y2="402" stroke="#415f7e"/>
+        <circle cx="412" cy="${y.toFixed(1)}" r="7" fill="#4fcbef" stroke="#d1ffff"/>
+        <text x="237" y="466" text-anchor="middle" font-size="13" fill="#bfd1e8">SIMULATED CARRIER · ${position_mm.toFixed(1)} mm</text>
+      </svg>`;
+    }
+
+    function setBanner(text, isWarn = false) {
+      const el = document.getElementById('msgBanner');
+      el.textContent = text;
+      el.className = isWarn
+        ? 'text-xs px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-semibold'
+        : 'text-xs px-3 py-1.5 rounded-lg bg-[var(--background)] border border-[var(--border)] text-[var(--muted-foreground)]';
+    }
+
+    function invoke(action, ...args) {
+      try {
+        sim[action](...args);
+        setBanner(`Action accepted in simulator: ${action}`, false);
+        refreshUI();
+      } catch (err) {
+        setBanner(`⚠ ${err.message}`, true);
+        refreshUI();
+      }
+    }
+
+    function updateExpPlan() {
+      const container = document.getElementById('expPlanMetrics');
+      try {
+        const g = parseFloat(document.getElementById('expG').value);
+        const t = parseFloat(document.getElementById('expT').value);
+        const isTotal = document.getElementById('expDurMode').value === 'total';
+        const plan = sim.experiment_plan(g, t, isTotal ? t : null);
+        const items = [
+          ['Peak speed', `${plan.v_peak_deg_s.toFixed(1)} °/s`],
+          ['Stroke needed', `${plan.distance_mm.toFixed(2)} mm`],
+          ['Accel phase', `${plan.t_acc_s.toFixed(3)} s`],
+          ['Decel phase', `${plan.t_dec_s.toFixed(3)} s`]
+        ];
+        container.innerHTML = items.map(([k, v]) => `
+          <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5">
+            <div class="text-xs text-[var(--muted-foreground)]">${k}</div>
+            <div class="text-sm font-bold text-sky-400 mt-0.5">${v}</div>
+          </div>`).join('');
+      } catch (e) {
+        container.innerHTML = `<div class="col-span-4 text-xs text-amber-400">⚠ ${e.message}</div>`;
+      }
+    }
+
+    function runExperiment() {
+      const g = parseFloat(document.getElementById('expG').value);
+      const t = parseFloat(document.getElementById('expT').value);
+      const mode = document.getElementById('expMode').value;
+      const isTotal = document.getElementById('expDurMode').value === 'total';
+      const delay = parseFloat(document.getElementById('expDelay').value);
+      const lock = parseFloat(document.getElementById('expLock').value);
+      const ret = document.getElementById('expReturn').checked;
+      invoke('start_experiment', g, t, mode, isTotal ? t : null, delay, lock, ret);
+    }
+
+    function runManualMove() {
+      invoke(
+        'move_absolute',
+        parseFloat(document.getElementById('manPos').value),
+        parseFloat(document.getElementById('manVel').value),
+        parseFloat(document.getElementById('manAcc').value),
+        parseFloat(document.getElementById('manDec').value),
+        document.getElementById('manCtrl').value
+      );
+    }
+
+    function runJog(dir) {
+      invoke(
+        'jog_for',
+        dir,
+        parseFloat(document.getElementById('jogDur').value),
+        parseFloat(document.getElementById('jogVel').value)
+      );
+    }
+
+    function onSkewInput(val) {
+      sim.offset2_deg = parseFloat(val);
+      document.getElementById('skewSliderVal').textContent = `${val}°`;
+      document.getElementById('skewWarn').classList.toggle('hidden', Math.abs(sim.offset2_deg) <= 40);
+      refreshUI();
+    }
+
+    function runControlTest() {
+      invoke(
+        'start_control_test',
+        parseFloat(document.getElementById('ctStart').value),
+        parseFloat(document.getElementById('ctEnd').value),
+        parseFloat(document.getElementById('ctVel').value),
+        parseFloat(document.getElementById('ctAcc').value)
+      );
+    }
+
+    function runIdentification() {
+      invoke(
+        'start_identification',
+        parseFloat(document.getElementById('idStart').value),
+        parseFloat(document.getElementById('idEnd').value),
+        parseFloat(document.getElementById('idVel').value),
+        parseFloat(document.getElementById('idAcc').value)
+      );
+    }
+
+    const PARAM_GROUPS = {
+      'Position cascade': ['pos_outer_kp', 'pos_outer_tn', 'pos_outer_tv', 'pos_inner_kp', 'pos_inner_tn', 'pos_inner_tv', 'pos_inner_limit_up', 'pos_inner_limit_low'],
+      'Acceleration cascade': ['acc_outer_kp', 'acc_outer_tn', 'acc_outer_tv', 'acc_inner_kp', 'acc_inner_tn', 'acc_inner_tv', 'acc_inner_limit_up', 'acc_inner_limit_low'],
+      'Torque limits': ['torque_ramp', 'velocity_limit_added', 'acceleration_limit_added'],
+      'Plant physics': ['m_equivalent_kg', 'm_platform_kg', 'friction_coulomb_n', 'friction_viscous_ns_m', 'friction_position_n_m2', 'friction_center_m'],
+      'Acceleration calibration': ['acc_gradient', 'acc_offset_g'],
+      'Offline-only feedback assumptions': ['max_motor_torque_nm', 'simulated_position_kp_s2', 'simulated_velocity_kp_s']
+    };
+
+    function renderParamEditor() {
+      const grp = document.getElementById('paramGroupSelect').value;
+      const keys = PARAM_GROUPS[grp] || [];
+      document.getElementById('paramEditorGrid').innerHTML = keys.map(k => `
+        <div>
+          <label class="block text-xs text-[var(--muted-foreground)] mb-1">${k}</label>
+          <input data-param="${k}" type="number" step="any" value="${sim.config[k]}" class="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+        </div>`).join('');
+    }
+
+    function applyParams() {
+      if (sim.current || sim.operation) {
+        setBanner('⚠ Stop the virtual machine before editing plant parameters.', true);
+        return;
+      }
+      document.querySelectorAll('[data-param]').forEach(inp => {
+        const k = inp.getAttribute('data-param');
+        const v = parseFloat(inp.value);
+        if (Number.isFinite(v)) sim.config[k] = v;
+      });
+      sim.event('Updated virtual parameter group: ' + document.getElementById('paramGroupSelect').value);
+      setBanner('Virtual parameters updated', false);
+      refreshUI();
+    }
+
+    function updateVacuum() {
+      sim.pump_turbo = document.getElementById('vacTurbo').checked;
+      sim.pump_diaphragm = document.getElementById('vacDiaphragmPump').checked;
+      sim.valve_big = document.getElementById('vacBig').checked;
+      sim.valve_normal = document.getElementById('vacNormal').checked;
+      sim.valve_diaphragm = document.getElementById('vacDiaphragmValve').checked;
+      renderVacuumTable();
+    }
+
+    function renderVacuumTable() {
+      const rows = [
+        ['bBigValveOpened', sim.valve_big],
+        ['bBigValveClosed', !sim.valve_big],
+        ['bNormalValveOpened', sim.valve_normal],
+        ['bNormalValveClosed', !sim.valve_normal],
+        ['bDiaphragmValveOpened', sim.valve_diaphragm],
+        ['bDiaphragmValveClosed', !sim.valve_diaphragm]
+      ];
+      document.getElementById('vacTableBody').innerHTML = rows.map(([k, v]) =>
+        `<tr><td class="py-1 font-mono">${k}</td><td class="py-1 font-bold ${v ? 'text-emerald-400' : 'text-[var(--muted-foreground)]'}">${v}</td></tr>`
+      ).join('');
+    }
+
+    function drawScopeCanvas() {
+      const canvas = document.getElementById('scopeCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+      ctx.fillStyle = '#101b2a';
+      ctx.fillRect(0, 0, W, H);
+
+      const hist = sim.history;
+      if (hist.length < 2) {
+        ctx.fillStyle = '#9eb2c9';
+        ctx.font = '13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Run homing or a motion first to populate scope traces.', W / 2, H / 2);
+        return;
+      }
+
+      const series = [
+        { key: 'pos_mm', label: 'Position [mm]', color: '#5ac8fa' },
+        { key: 'vel_mm_s', label: 'Velocity [mm/s]', color: '#7ce3ab' },
+        { key: 'acc_g', label: 'Acceleration [g]', color: '#ffbb66' }
+      ];
+      const padL = 72, padR = 20, padT = 18, padB = 26;
+      const rowH = (H - padT - padB) / series.length;
+      const tMin = hist[0].time_s, tMax = Math.max(tMin + 1e-3, hist[hist.length - 1].time_s);
+
+      series.forEach((s, idx) => {
+        const y0 = padT + idx * rowH;
+        const h = rowH - 14;
+        const vals = hist.map(r => r[s.key]);
+        let vMin = Math.min(...vals), vMax = Math.max(...vals);
+        if (Math.abs(vMax - vMin) < 1e-6) { vMin -= 1; vMax += 1; }
+
+        ctx.strokeStyle = '#213146';
+        ctx.strokeRect(padL, y0, W - padL - padR, h);
+
+        ctx.fillStyle = s.color;
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${s.label} (${vMin.toFixed(2)} .. ${vMax.toFixed(2)})`, padL + 6, y0 + 13);
+
+        ctx.beginPath();
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = 1.8;
+        hist.forEach((r, i) => {
+          const x = padL + ((r.time_s - tMin) / (tMax - tMin)) * (W - padL - padR);
+          const y = y0 + h - ((r[s.key] - vMin) / (vMax - vMin)) * (h - 18) - 4;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      });
+    }
+
+    function switchTab(idx) {
+      document.querySelectorAll('.tab-pane').forEach((el, i) => el.classList.toggle('hidden', i !== idx));
+      document.querySelectorAll('.tab-btn').forEach((btn, i) => {
+        btn.className = i === idx
+          ? 'tab-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-600 text-white'
+          : 'tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]';
+      });
+      if (idx === 5) drawScopeCanvas();
+    }
+
+    function downloadFile(filename, content, mime) {
+      const blob = new Blob([content], { type: mime });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+    }
+
+    function exportCSV() {
+      if (!sim.history.length) return;
+      const keys = Object.keys(sim.history[0]);
+      const csv = [keys.join(','), ...sim.history.map(r => keys.map(k => r[k]).join(','))].join('\n');
+      downloadFile('akus_simulated_scope.csv', csv, 'text/csv');
+    }
+
+    function exportParamsJSON() {
+      downloadFile('akus_parameters.json', JSON.stringify(sim.config, null, 2), 'application/json');
+    }
+
+    function exportEventsJSON() {
+      downloadFile('akus_simulation_events.json', JSON.stringify(sim.events, null, 2), 'application/json');
+    }
+
+    function refreshUI() {
+      document.getElementById('mState').textContent = sim.state;
+      document.getElementById('mHeight').textContent = `${sim.pos_mm.toFixed(1)} mm`;
+      document.getElementById('mVel').textContent = `${sim.vel_mm_s.toFixed(2)} mm/s`;
+      document.getElementById('mAcc').textContent = `${sim.acc_g.toFixed(3)} g`;
+      document.getElementById('mSkew').textContent = `${sim.offset2_deg.toFixed(1)}°`;
+      document.getElementById('mTime').textContent = `${sim.t_s.toFixed(1)} s`;
+
+      const fb = document.getElementById('faultBanner');
+      if (sim.fault) {
+        fb.textContent = `🚨 FAULT: ${sim.fault}`;
+        fb.classList.remove('hidden');
+      } else {
+        fb.classList.add('hidden');
+      }
+
+      document.getElementById('svgContainer').innerHTML = carrierSVG(sim.pos_mm, sim.offset2_deg);
+
+      const statusRows = [
+        ['Operational state', sim.state],
+        ['Active step', sim.phase],
+        ['Mode (E_OpMode)', `${sim.op_mode} = ${OP_MODES[sim.op_mode] ?? '—'}`],
+        ['Axis 1 [deg]', sim.pos_deg.toFixed(2)],
+        ['Axis 2 [deg]', sim.pos2_deg.toFixed(2)],
+        ['Upper TouchProbe', sim.switch_top_nc ? 'CLOSED (normal)' : 'OPEN (actuated)'],
+        ['Reference', sim.homed ? 'Done' : 'Required'],
+        ['Motors', sim.enabled ? 'Enabled (virtual)' : 'Disabled'],
+        ['Recording', sim.recording ? 'ON' : 'OFF'],
+        ['Camera trigger', sim.camera_on ? 'ON' : 'OFF']
+      ];
+      document.getElementById('statusTableBody').innerHTML = statusRows.map(([k, v]) => `
+        <tr>
+          <td class="py-1.5 px-2.5 font-medium text-[var(--muted-foreground)]">${k}</td>
+          <td class="py-1.5 px-2.5 font-semibold">${v}</td>
+        </tr>`).join('');
+
+      document.getElementById('eventLogBody').innerHTML = [...sim.events].reverse().slice(0, 60).map(e => `
+        <tr>
+          <td class="py-1 font-mono text-sky-400">${e.time_s.toFixed(3)}</td>
+          <td class="py-1">${e.event}</td>
+        </tr>`).join('');
+
+      if (!document.getElementById('tab5').classList.contains('hidden')) {
+        drawScopeCanvas();
+      }
+    }
+
+    document.getElementById('plantSelect').addEventListener('change', e => {
+      sim.simulation_type = e.target.value;
+      sim.event(`Numerical plant set to ${sim.simulation_type}`);
+    });
+    document.getElementById('speedSlider').addEventListener('input', e => {
+      document.getElementById('speedVal').textContent = `${e.target.value}× real time`;
+    });
+    document.getElementById('elevatorToggle').addEventListener('change', e => {
+      sim.in_elevator = e.target.checked;
+      refreshUI();
+    });
+
+    updateExpPlan();
+    renderParamEditor();
+    renderVacuumTable();
+    refreshUI();
+
+    let lastWall = performance.now();
+    function loop(now) {
+      const dt = Math.min(0.25, Math.max(0, (now - lastWall) / 1000));
+      lastWall = now;
+      const live = document.getElementById('liveClockToggle').checked;
+      const speed = parseFloat(document.getElementById('speedSlider').value) || 12;
+      if (live && (sim.current || sim.next_step || sim.operation)) {
+        sim.step(dt * speed);
+        refreshUI();
+      }
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

@@ -6,6 +6,18 @@ A runnable **Python + Streamlit web dashboard** based on the uploaded AKUS Beckh
 
 ## Run on Windows
 
+### Option A: Native Python Desktop App (No Streamlit or Browser required)
+
+Run the standalone Tkinter + Matplotlib desktop GUI directly:
+
+```powershell
+python desktop_app.py
+```
+
+Or simply double-click `start_desktop_windows.bat`.
+
+### Option B: Streamlit Web Dashboard
+
 1. Extract the ZIP to a folder.
 2. Make sure Python 3.10 or newer is installed, then open **PowerShell** in that folder.
 3. Run:
@@ -18,7 +30,7 @@ A runnable **Python + Streamlit web dashboard** based on the uploaded AKUS Beckh
    Or double-click `start_windows.bat`, which also installs the dependencies. If `py` is not available, use `python`.
 4. Streamlit normally opens a browser page at `http://localhost:8501`. Use **Home both axes (simulation)**, then **Run sequence to completion** to jump to Ready quickly. From there, test Manual motion, Experiment, Identification, and so on.
 
-Linux/macOS: `python3 -m pip install -r requirements.txt && python3 -m streamlit run app.py`.
+Linux/macOS: `python3 desktop_app.py` (native desktop) or `python3 -m pip install -r requirements.txt && python3 -m streamlit run app.py` (Streamlit).
 
 ## What works now
 
@@ -80,6 +92,8 @@ The numerical engine itself only uses Python standard-library modules and tests 
 
 ## Project structure
 
+- `desktop_app.py` — Native Python desktop GUI (Tkinter + Matplotlib), runs without Streamlit or a browser
+- `start_desktop_windows.bat` — One-click Windows launcher for the native desktop GUI
 - `app.py` — Streamlit interface and live SVG motion illustration
 - `akus_sim.py` — simulation, trajectories, state progression, experiment calculation, virtual I/O
 - `assets/` — four images from supplied TwinCAT visualization project
