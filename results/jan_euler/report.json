@@ -1,0 +1,139 @@
+{
+  "plant": "jan_euler",
+  "backend": "reference",
+  "seed": 42,
+  "dt_seconds": 0.02,
+  "parameters": {
+    "m_platform": 17.395,
+    "m_equivalent": 4154.59,
+    "b_viscous": 3994.857,
+    "friction_coulomb": 225.059,
+    "friction_position": 1207.7,
+    "z_reference": 0.249715,
+    "pitch": 0.005,
+    "gravity": 9.80665
+  },
+  "q_injected": 0.0001,
+  "q_estimated": 0.0004299387058261327,
+  "Q_injected": [
+    [
+      2.6287049051619586e-10,
+      1.9621226540972534e-08
+    ],
+    [
+      1.9621226540972534e-08,
+      1.962182622052659e-06
+    ]
+  ],
+  "Q_estimated": [
+    [
+      1.1301819849241392e-09,
+      8.435924745747094e-08
+    ],
+    [
+      8.435924745747094e-08,
+      8.436182571198477e-06
+    ]
+  ],
+  "R_injected": [
+    [
+      1.225e-07,
+      0.0
+    ],
+    [
+      0.0,
+      0.0016
+    ]
+  ],
+  "R_estimated": [
+    [
+      1.2816108189967658e-07,
+      -1.2693239617978475e-07
+    ],
+    [
+      -1.2693239617978475e-07,
+      0.00154257406269256
+    ]
+  ],
+  "first_K": [
+    [
+      0.5000164612243339,
+      3.324113281567988e-05
+    ],
+    [
+      -0.09934319917263383,
+      -0.2006096515708492
+    ]
+  ],
+  "last_K": [
+    [
+      0.4173424784781023,
+      -0.0004140820647246836
+    ],
+    [
+      5.622276655036944,
+      -0.014495462294844405
+    ]
+  ],
+  "first_S": [
+    [
+      2.5632216379935316e-07,
+      -1.2693239617978475e-07
+    ],
+    [
+      -1.2693239617978475e-07,
+      0.001909329862627397
+    ]
+  ],
+  "last_S": [
+    [
+      2.2090810889660142e-07,
+      -1.3347337670231387e-06
+    ],
+    [
+      -1.3347337670231383e-06,
+      0.0015715731924737747
+    ]
+  ],
+  "fit": {
+    "nll": -6245.33892645269,
+    "iterations": 10,
+    "near_bound": false
+  },
+  "metrics": {
+    "mean_nis": 3.267909612681405,
+    "n_samples": 820,
+    "position_innovation_mean": 7.467346202739741e-07,
+    "position_lag1_correlation": 0.13789524447329396,
+    "acceleration_innovation_mean": 0.0010616105829264644,
+    "acceleration_lag1_correlation": 0.4301398243104802,
+    "position_rmse_mm": 0.258739047473751,
+    "velocity_rmse_mm_s": 5.06722525688081,
+    "mean_nees": 1.8911655003203667,
+    "position_95pct_coverage": 0.9304878048780488,
+    "raw_position_rmse_mm": 0.350390567832465,
+    "nis_mean_95pct_nominal_range": [
+      1.865434747108724,
+      2.1391851058460256
+    ],
+    "nees_mean_95pct_nominal_range": [
+      1.865434747108724,
+      2.1391851058460256
+    ],
+    "q_ratio_to_known_injected": 4.299387058261327,
+    "R_acc_ratio_to_known_injected": 0.9641087891828499,
+    "R_position_ratio_to_known_injected": 1.0462129134667477,
+    "training_samples": 850,
+    "validation_samples": 850
+  },
+  "warnings": [
+    "Held-out mean NIS is outside nominal interval",
+    "Held-out innovations appear temporally correlated",
+    "Jan nonlinear Euler plant and linear estimator are intentionally mismatched"
+  ],
+  "notes": [
+    "Synthetic, known model/noise; not validated against hardware",
+    "Validation uses independent random seed and force profile",
+    "NIS and NEES intervals assume temporally independent residuals"
+  ]
+}

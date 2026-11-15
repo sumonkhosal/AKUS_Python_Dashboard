@@ -1,0 +1,135 @@
+{
+  "plant": "linear",
+  "backend": "reference",
+  "seed": 42,
+  "dt_seconds": 0.02,
+  "parameters": {
+    "m_platform": 17.395,
+    "m_equivalent": 4154.59,
+    "b_viscous": 3994.857,
+    "friction_coulomb": 225.059,
+    "friction_position": 1207.7,
+    "z_reference": 0.249715,
+    "pitch": 0.005,
+    "gravity": 9.80665
+  },
+  "q_injected": 0.0001,
+  "q_estimated": 9.090585052337033e-05,
+  "Q_injected": [
+    [
+      2.6287049051619586e-10,
+      1.9621226540972534e-08
+    ],
+    [
+      1.9621226540972534e-08,
+      1.962182622052659e-06
+    ]
+  ],
+  "Q_estimated": [
+    [
+      2.3896465517870335e-10,
+      1.783684287018836e-08
+    ],
+    [
+      1.783684287018836e-08,
+      1.7837388013987384e-06
+    ]
+  ],
+  "R_injected": [
+    [
+      1.225e-07,
+      0.0
+    ],
+    [
+      0.0,
+      0.0016
+    ]
+  ],
+  "R_estimated": [
+    [
+      1.2816108189967658e-07,
+      -1.2693239617978475e-07
+    ],
+    [
+      -1.2693239617978475e-07,
+      0.00154257406269256
+    ]
+  ],
+  "first_K": [
+    [
+      0.5000164612243339,
+      3.324113281567988e-05
+    ],
+    [
+      -0.09934319917263383,
+      -0.2006096515708492
+    ]
+  ],
+  "last_K": [
+    [
+      0.30630408410658033,
+      -0.00019758311919414905
+    ],
+    [
+      2.7958998731320936,
+      -0.004559796524309682
+    ]
+  ],
+  "first_S": [
+    [
+      2.5632216379935316e-07,
+      -1.2693239617978475e-07
+    ],
+    [
+      -1.2693239617978475e-07,
+      0.001909329862627397
+    ]
+  ],
+  "last_S": [
+    [
+      1.8492904354103348e-07,
+      -6.24751422683207e-07
+    ],
+    [
+      -6.24751422683207e-07,
+      0.0015510187076408623
+    ]
+  ],
+  "fit": {
+    "nll": -6936.2724625449855,
+    "iterations": 10,
+    "near_bound": false
+  },
+  "metrics": {
+    "mean_nis": 2.090407392198608,
+    "n_samples": 820,
+    "position_innovation_mean": -2.0649817082083183e-06,
+    "position_lag1_correlation": -0.025708395210105275,
+    "acceleration_innovation_mean": 0.0011073539246861319,
+    "acceleration_lag1_correlation": -0.0358539296006133,
+    "position_rmse_mm": 0.19308195026332994,
+    "velocity_rmse_mm_s": 2.909743631157238,
+    "mean_nees": 2.082061540311426,
+    "position_95pct_coverage": 0.9646341463414634,
+    "raw_position_rmse_mm": 0.35039056783246564,
+    "nis_mean_95pct_nominal_range": [
+      1.865434747108724,
+      2.1391851058460256
+    ],
+    "nees_mean_95pct_nominal_range": [
+      1.865434747108724,
+      2.1391851058460256
+    ],
+    "q_ratio_to_known_injected": 0.9090585052337032,
+    "R_acc_ratio_to_known_injected": 0.9641087891828499,
+    "R_position_ratio_to_known_injected": 1.0462129134667477,
+    "training_samples": 850,
+    "validation_samples": 850
+  },
+  "warnings": [],
+  "notes": [
+    "Synthetic, known model/noise; not validated against hardware",
+    "Validation uses independent random seed and force profile",
+    "NIS and NEES intervals assume temporally independent residuals"
+  ]
+}

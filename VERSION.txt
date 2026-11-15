@@ -1,0 +1,1 @@
+AKUS Python Control Studio v4 — acceleration-first Kalman module, Earth-hardware replay, preserves v3 tabs.

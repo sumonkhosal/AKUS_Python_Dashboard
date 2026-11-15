@@ -18,6 +18,18 @@ from plotly.subplots import make_subplots
 import streamlit as st
 import streamlit.components.v1 as components
 
+from kalman_lab import (
+    load_twincat_csv, make_real_observations, make_simulation_observations,
+    analyze_frequency, estimate_and_validate,
+)
+from akuskf.benchmark import run_benchmark, report_json_ready
+from akuskf import ModelParameters
+from akuskf.acceleration import (
+    run_acceleration_filter, fit_acceleration_q, estimate_acceleration_r,
+    jan_linear_acceleration_prior, acceleration_diagnostics
+)
+from akuskf.synthetic import generate as generate_jan_synthetic
+from kalman_lab import _decimate
 from akus_sim import (
     Simulator, ControlConfig, OP_MODES, TOP_DEG, NORMAL_TOP_DEG,
     HOME_VEL, MAX_DEC, DEG_TO_M,
@@ -181,7 +193,7 @@ def live_monitor():
 
 live_monitor()
 
-tabs=st.tabs(['Experiment','Manual motion','Controller tuning','Identification','Vacuum','Analysis / Scopes','Diagnostics','Project reference'])
+tabs=st.tabs(['Experiment','Manual motion','Controller tuning','Identification','Vacuum','Analysis / Scopes','Diagnostics','Project reference','Kalman research','Simulation Q/R benchmark','Acceleration KF'])
 
 with tabs[0]:
     st.subheader('Automatic acceleration experiment · Flug')
@@ -404,7 +416,7 @@ with tabs[7]:
         ('GVL_Persist.TcGVL','Default parameter values','Imported as editable Python config'),
         ('VISUs/*.TcVIS','Original page concepts','Recreated as modern dashboard, not pixel-perfect'),
         ('Measurement/*.tcscopex','Scope channel catalogs','Catalogs extracted; synthetic traces where supported'),
-        ('FB_AkusKalmanFilter.TcPOU','State estimation / sensor chain','Not replicated; source bugs require fixing'),
+        ('FB_AkusKalmanFilter.TcPOU','State estimation / sensor chain','Corrected two-state Python reference + optional FilterPy in Kalman research; not TwinCAT scan-exact'),
         ('FB_TCPServer.TcPOU','Raspberry Pi accelerometer data','Not connected'),
         ('Beckhoff PLCopen MC_* / EtherCAT','Real motor drives / torque / homing / E-STOP','NOT connected for safety'),
     ]
@@ -414,3 +426,572 @@ with tabs[7]:
     st.markdown('#### Units & constraints')
     st.code('1 motor revolution = 360° = 5 mm carrier travel\n44,000° = 611.11 mm simulated upper limit\nExperiment travel guard = 43,280° = 601.11 mm\nNominal gravitation = 9.80665 m/s²',language='text')
     st.markdown('See `README.md`, `reference/PLC_mapping.md` and `reference/scope_catalog.json` for source mapping, limitations, and test instructions.')
+
+
+# Offline Kalman research integrated into existing live simulator and Visu.
+with tabs[8]:
+    st.subheader('Kalman research · Simulation + TwinCAT sensor recordings')
+    st.caption('Jan two-state damped physics model · R from a stationary sample · '
+               'structured Q via innovation likelihood · S and K calculated per update. '
+               'OFFLINE only; the estimator never changes motor commands.')
+    st.info('Use **Current carrier simulation** to compare ground truth against noisy measurements '
+            'while the carrier visualization moves. Use **Real AKUS sample** or upload the '
+            'full TwinCAT CSV to test measured signals. This is an estimator research tool, '
+            'not a calibrated replacement for a physical sensor or a safety controller.')
+    lab_a,lab_b=st.columns([1.1,1])
+    with lab_a:
+        lab_mode=st.radio('Data source',
+            ['Current carrier simulation','Included real AKUS recording','Upload TwinCAT Scope CSV'],
+            horizontal=False, key='kalman_source')
+    with lab_b:
+        backend=st.selectbox('Filter algorithm', ['reference','filterpy'],
+                 help='Reference uses SciPy Cholesky solves and Joseph covariance update. '
+                      'FilterPy uses an established Python Kalman-filter implementation.',key='kf_backend')
+        fit_q=st.checkbox('Estimate Q from training measurements (innovation likelihood)',True,key='kf_fit')
+        manual_q=st.number_input('Provisional qₐ [m²/s³] when not fitting',
+                      min_value=1e-10,max_value=100.,value=1e-4,format='%.6g',key='kf_q')
+    datafile=None
+    calfile=None
+    dt_target=.02
+    sign_z=-1
+    sign_tau=1
+    force_factor=1.
+    calibration_note=''
+    if lab_mode=='Current carrier simulation':
+        c1,c2,c3=st.columns(3)
+        with c1: enc_sd=st.number_input('Synthetic encoder noise SD [mm]',min_value=0.001,
+                                         value=0.2,format='%.3f',key='kf_enc')
+        with c2: acc_sd=st.number_input('Synthetic acceleration noise SD [m/s²]',
+                        min_value=.00001,value=.015,format='%.5f',key='kf_acc')
+        with c3: seed=st.number_input('Random seed',min_value=0,value=42,step=1,key='kf_seed')
+        st.caption(f'Available current carrier samples: {len(sim.history)}. '
+                   'Run homing, a manual motion or an experiment in the other tabs first. '
+                   'The position and velocity in sim.history are the simulation ground truth; '
+                   'noise is injected only for the estimator.')
+        if sim.simulation_type=='Ideal NC trajectory':
+            st.warning('Ideal NC motion is not generated by Jan’s force equation: '
+                       'a large Q or imperfect innovation consistency is expected.')
+    else:
+        upload_start=230.0
+        upload_duration=10.0
+        if lab_mode=='Included real AKUS recording':
+            st.caption('Bundled samples from November 5, 2026: '
+                      '230–240 s (real moving experiment) and 2–10 s (real stationary calibration). '
+                      'The files are extracts; the original 296 s recording is not embedded.')
+            datafile=ROOT/'examples'/'akus_movement_REAL.csv'
+            calfile=ROOT/'examples'/'akus_stationary_REAL.csv'
+        else:
+            datafile=st.file_uploader('Upload full Test_KalmanFilter.csv or compatible export',
+                                     type=['csv'],key='kf_motion_upload')
+            calfile=st.file_uploader('Optional separate stationary calibration recording',
+                                    type=['csv'],key='kf_cal_upload')
+            t1,t2=st.columns(2)
+            with t1:upload_start=st.number_input('Analysis start in uploaded recording [s]',
+                                 min_value=0.,value=230.,step=1.,key='kf_record_start')
+            with t2:upload_duration=st.number_input('Analysis duration [s] (max 30 s)',
+                                 min_value=.5,max_value=30.,value=10.,step=.5,key='kf_record_duration')
+            if calfile is None:
+                calfile=ROOT/'examples'/'akus_stationary_REAL.csv'
+                calibration_note=('No separate stationary recording supplied; using the bundled '
+                                  'November 5, 2026 stationary sample. Verify identical sensor '
+                                  'configuration and operating conditions before interpreting R.')
+        x1,x2,x3=st.columns(3)
+        with x1:dt_target=st.selectbox('Kalman sample period [ms]',[5,10,20,50],index=2,key='kf_dt')/1000
+        with x2:sign_z=st.selectbox('Encoder-to-vertical direction',[-1,1],
+                    help='Jan’s Kalman source uses a negative encoder angle sign. '
+                         'Check against known direction of motion.',key='kf_sign_z')
+        with x3:sign_tau=st.selectbox('Torque-to-force direction',[-1,1],index=1,
+                    help='Nm alone does not establish the mechanical force polarity.',key='kf_sign_tau')
+        force_factor=st.number_input('Exploratory force scale multiplier (NOT calibration)',
+                        min_value=0.01,max_value=100.0,value=1.,step=.1,key='kf_force_scale')
+        st.caption('Real position is reconstructed from the two encoder angles relative '
+                   'to the beginning of the chosen segment. fAccZUnfiltered is in g; '
+                   'the stationary baseline is subtracted and converted to m/s². '
+                   'Raw 2 kHz signals are low-pass resampled before estimation; '
+                   'R is estimated on the same resampled calibration signals.')
+        if calibration_note:st.warning(calibration_note)
+    with st.form('run_akus_kalman_lab'):
+        run_kf=st.form_submit_button('Analyze Q / R / S / K using selected data',type='primary')
+    if run_kf:
+        try:
+            if lab_mode=='Current carrier simulation':
+                data=make_simulation_observations(sim.history,sim.config,enc_sd,acc_sd,int(seed))
+                spectrum=None
+            else:
+                if datafile is None:
+                    raise ValueError('Upload the motion CSV first')
+                motion=load_twincat_csv(datafile)
+                station=load_twincat_csv(calfile)
+                if lab_mode=='Upload TwinCAT Scope CSV':
+                    st.caption(f'Imported {len(motion):,} samples; {len(station):,} stationary samples')
+                    start=float(motion['time_s'].min());end=float(motion['time_s'].max())
+                    # Restrict interactive 2 kHz recording to a user-selected interval.
+                    slice_start=float(upload_start)
+                    slice_end=slice_start+float(upload_duration)
+                    subset=motion[(motion['time_s']>=slice_start)&(motion['time_s']<=slice_end)]
+                    if len(subset)<100:
+                        raise ValueError(f'No 100+ samples between {slice_start:.2f} and {slice_end:.2f} s; '
+                                         f'file range {start:.2f}–{end:.2f} s')
+                    motion=subset.copy()
+                data=make_real_observations(motion,station,dt_target,
+                        sign_z,sign_tau,force_factor,sim.config)
+                spectrum=analyze_frequency(motion,min(5.,float(motion['time_s'].max()-motion['time_s'].min())),station)
+            if len(data['y']) > 12000:
+                raise ValueError('Too many estimator samples. Choose a longer sampling period or a shorter recording.')
+            output=estimate_and_validate(data,backend=backend,fit=fit_q,q_initial=manual_q)
+            st.session_state.kf_lab_report=(data,output,spectrum,lab_mode)
+        except Exception as error:
+            st.session_state.pop('kf_lab_report',None)
+            st.error(f'Cannot analyze the requested recording: {error}')
+    if 'kf_lab_report' in st.session_state:
+        data,analysis,spectrum,which=st.session_state.kf_lab_report
+        f=analysis['result'];met=analysis['metrics']
+        q=analysis['q']; R=data['R']; cut=analysis['split']
+        st.markdown(f'#### Analysis results — {data["source"]}')
+        if which!=lab_mode:
+            st.warning('These results are from a previous data source. Press Analyze to refresh.')
+        c1,c2,c3,c4=st.columns(4)
+        c1.metric('Identified qₐ [m²/s³]',f'{q:.4g}')
+        c2.metric('R position [m²]',f'{R[0,0]:.3g}')
+        c3.metric('R accel [(m/s²)²]',f'{R[1,1]:.3g}')
+        c4.metric('Held-out mean NIS',f'{met["mean_nis"]:.3f}')
+        if analysis['fit_report'] and analysis['fit_report']['near_bound']:
+            st.warning('Q optimization reached an allowed bound. The fitted value is not '
+                       'well identified; check physical model, torque scaling, units, '
+                       'timing and noise assumptions. Do NOT treat q as calibrated.')
+        if which!='Current carrier simulation':
+            st.caption(f'Stationary acceleration reference: {data["baseline_g"]:.7f} g. '
+                       f'Original 2 kHz stationary acceleration variance: '
+                       f'{data["raw_R"][1,1]:.3e} (m/s²)²; '
+                       f'after low-pass resampling: {R[1,1]:.3e} (m/s²)².')
+            st.warning('REAL MEASUREMENTS: no independent platform-position ground truth. '
+                       'The encoder is itself a Kalman measurement. R from stationary '
+                       'scatter is only a preliminary estimate; vibration and sensor '
+                       'correlation may invalidate white-noise assumptions. The fitted '
+                       'Q may compensate for omitted Coulomb/static friction and torque bias.')
+        st.caption(f'{len(data["y"]):,} estimator samples at {data["dt"]*1000:.2f} ms; '
+                   f'first {cut:,} used to fit Q, remaining {len(data["y"])-cut:,} '
+                   'held out for a within-recording check (NOT an independent experiment).')
+        results=pd.DataFrame({
+            'time_s':data['t'],
+            'encoder_position_mm':data['y'][:,0]*1000,
+            'kf_position_mm':f['estimates'][:,0]*1000,
+            'kf_velocity_mm_s':f['estimates'][:,1]*1000,
+            'acceleration_resampled_ms2':data['y'][:,1],
+            'NIS':f['nis'],
+            'K_position_from_encoder':f['gains'][:,0,0],
+            'K_velocity_from_accel':f['gains'][:,1,1],
+        })
+        if data.get('truth') is not None:
+            results['true_position_mm']=data['truth'][:,0]*1000
+            results['true_velocity_mm_s']=data['truth'][:,1]*1000
+        st.plotly_chart(go.Figure([
+            go.Scatter(x=results['time_s'],y=results[c],name=c,mode='lines')
+            for c in ('true_position_mm','encoder_position_mm','kf_position_mm')
+            if c in results.columns]).update_layout(
+            title='Carrier position — reference / encoder / Kalman',
+            template='plotly_dark',xaxis_title='Time [s]',yaxis_title='Position [mm]',height=370
+        ),use_container_width=True)
+        a,b=st.columns(2)
+        with a:
+            st.line_chart(results.set_index('time_s')[['acceleration_resampled_ms2']],
+                          height=260)
+        with b:
+            st.line_chart(results.set_index('time_s')[['NIS']],height=260)
+        st.markdown('##### Covariance matrices and filter gain')
+        cols=st.columns(4)
+        for col,(name,mat) in zip(cols,[('R',f['R']),('Q',f['Q']),
+                       ('Last S',f['S'][-1]),('Last K',f['gains'][-1])]):
+            with col:
+                st.markdown(f'**{name}**')
+                st.dataframe(pd.DataFrame(mat).style.format('{:.4e}'),hide_index=True)
+        st.markdown('##### Validation diagnostics')
+        st.json({k:round(float(v),6) if np.isfinite(v) else None for k,v in met.items()})
+        if spectrum is not None:
+            with st.expander('Frequency analysis · acceleration PSD + torque/velocity coherence',expanded=True):
+                g1,g2=st.columns(2)
+                with g1:
+                    fig1=go.Figure()
+                    fig1.add_trace(go.Scatter(x=spectrum['frequency_hz'],y=spectrum['acc_psd'],name='Moving'))
+                    if 'stationary_psd' in spectrum:
+                        fig1.add_trace(go.Scatter(x=spectrum['frequency_hz'],y=spectrum['stationary_psd'],name='Stationary'))
+                    fig1.update_layout(template='plotly_dark',title='Welch acceleration PSD',
+                                       xaxis_title='Frequency [Hz]',yaxis_title='(m/s²)²/Hz',
+                                       yaxis_type='log',height=310)
+                    st.plotly_chart(fig1,use_container_width=True)
+                with g2:
+                    fig2=go.Figure()
+                    for key,title in [('coherence_torque','Torque'),('coherence_velocity','Velocity')]:
+                        fig2.add_trace(go.Scatter(x=spectrum['frequency_hz'],
+                                  y=spectrum[key],name=title))
+                    fig2.update_layout(template='plotly_dark',title='Magnitude-squared coherence',
+                                xaxis_title='Frequency [Hz]',yaxis_range=[0,1],height=310)
+                    st.plotly_chart(fig2,use_container_width=True)
+                st.caption('Coherence indicates spectral association, not proof of '
+                           'mechanical vibration. Strong vibration during movement '
+                           'must not automatically be treated as white sensor noise.')
+        d1,d2=st.columns(2)
+        with d1:
+            st.download_button('Export estimator time series CSV',
+                results.to_csv(index=False).encode('utf8'),
+                file_name='AKUS_Kalman_Results.csv',mime='text/csv')
+        with d2:
+            report={'source':data['source'],'sample_period_s':data['dt'],
+                    'n_samples':len(data['y']),'Q_intensity_q_a':q,
+                    'Q':f['Q'].tolist(),'R':f['R'].tolist(),
+                    'K_last':f['gains'][-1].tolist(),'S_last':f['S'][-1].tolist(),
+                    'model':{k:float(v) for k,v in vars(data['p']).items()},
+                    'validation':{k:float(v) for k,v in met.items()},
+                    'fit_status':analysis['fit_report']}
+            st.download_button('Export identification report JSON',
+                 json.dumps(report,indent=2),file_name='AKUS_Kalman_Identification.json',
+                 mime='application/json')
+    else:
+        st.caption('Press Analyze to run the Kalman model using the selected source. '
+                   'The carrier animation and all original operator functions remain available.')
+
+# Explicitly physics-based, known-noise benchmark. Separate from v2's recorded
+# carrier history and real recordings. None of this runs on Beckhoff hardware.
+with tabs[9]:
+    st.subheader('Jan physics · controlled Q/R identification benchmark')
+    st.caption('Source-aligned offline plant vs. corrected linear Kalman estimator. '
+               'Known synthetic truth permits an accuracy and covariance-calibration test. '
+               'Run independent training and validation experiments; this page does not change the carrier controls.')
+    st.info('For the FIRST research milestone choose **Matched linear plant**. '
+            'When Q/R recovery and NIS/NEES look reasonable, choose **Jan nonlinear Euler plant** '
+            'to measure what changes when the estimator no longer perfectly matches the physics.')
+    with st.form('controlled_kalman_benchmark'):
+        ca,cb,cc=st.columns(3)
+        with ca:
+            plant_choice=st.selectbox('Truth plant', ['Matched linear plant', 'Jan nonlinear Euler plant'],
+                help='Linear is deliberately matched; nonlinear reproduces the FB_AkusModel friction '
+                     'sign/threshold force rule and the Euler update in FB_AccIntegrator.')
+            sample_dt_ms=st.selectbox('Simulation / Kalman sample time [ms]', [5,10,20,50],index=2)
+            samples_train=st.number_input('Training samples',min_value=200,max_value=3000,value=850,step=100)
+        with cb:
+            inj_q=st.number_input('Known process intensity qₐ [m²/s³]',
+                  min_value=1e-8,max_value=.5,value=.0001,format='%.6g')
+            sd_position=st.number_input('Known encoder noise SD [mm]',
+                   min_value=.001,max_value=5.,value=.35,format='%.4f')
+            sd_acc=st.number_input('Known acceleration noise SD [m/s²]',
+                   min_value=.0001,max_value=1.,value=.04,format='%.5f')
+        with cc:
+            samples_val=st.number_input('Independent validation samples',
+                    min_value=200,max_value=3000,value=850,step=100)
+            seed_benchmark=st.number_input('Reproducible random seed',min_value=0,value=42,step=1)
+            algorithm_bench=st.selectbox('Kalman implementation', ['reference','filterpy'],
+                 help='Both use the same model and data. FilterPy requires pip install filterpy.')
+            identify_bench=st.checkbox('Estimate q from training data',value=True,
+                   help='If unchecked q uses known injected value (oracle sanity check).')
+        submit_benchmark=st.form_submit_button('Run train / held-out benchmark',type='primary')
+    if submit_benchmark:
+        try:
+            with st.spinner('Generating truth, estimating R/Q and independently validating...'):
+                bench=run_benchmark(
+                    plant='linear' if plant_choice.startswith('Matched') else 'jan_euler',
+                    dt=float(sample_dt_ms)*1e-3,
+                    n_train=int(samples_train),n_validation=int(samples_val),
+                    q_true=float(inj_q),noise_z_mm=float(sd_position),noise_a_ms2=float(sd_acc),
+                    seed=int(seed_benchmark),backend=algorithm_bench,fit=identify_bench,
+                    q_fixed=float(inj_q),model=ModelParameters(
+                        m_platform=float(sim.config.m_platform_kg),
+                        m_equivalent=float(sim.config.m_equivalent_kg),
+                        b_viscous=float(sim.config.friction_viscous_ns_m),
+                        friction_coulomb=float(sim.config.friction_coulomb_n),
+                        friction_position=float(sim.config.friction_position_n_m2),
+                        z_reference=float(sim.config.friction_center_m)))
+                st.session_state.known_noise_benchmark=bench
+        except Exception as error:
+            st.session_state.pop('known_noise_benchmark',None)
+            st.error(f'Benchmark could not finish: {error}')
+    if 'known_noise_benchmark' in st.session_state:
+        bench=st.session_state.known_noise_benchmark
+        m=bench['metrics']; val=bench['validation']; f=bench['validation_result']
+        st.markdown('#### Independently held-out validation')
+        a1,a2,a3,a4=st.columns(4)
+        a1.metric('Injected process qₐ',f'{bench["training"]["q_true"]:.4g}')
+        a2.metric('Identified process qₐ',f'{bench["q_est"]:.4g}')
+        a3.metric('Mean held-out NIS',f'{m["mean_nis"]:.3f}')
+        a4.metric('Mean held-out NEES',f'{m["mean_nees"]:.3f}')
+        st.caption(f'Nominal 95% NIS mean interval: {m["nis_mean_95pct_nominal_range"][0]:.3f}'
+                   f'–{m["nis_mean_95pct_nominal_range"][1]:.3f}; '
+                   f'NEES mean interval: {m["nees_mean_95pct_nominal_range"][0]:.3f}'
+                   f'–{m["nees_mean_95pct_nominal_range"][1]:.3f}. '
+                   'Intervals assume white Gaussian innovations and independent time samples.')
+        b1,b2,b3,b4=st.columns(4)
+        b1.metric('Encoder raw position RMSE',f'{m["raw_position_rmse_mm"]:.3f} mm')
+        b2.metric('Kalman position RMSE',f'{m["position_rmse_mm"]:.3f} mm')
+        b3.metric('Kalman velocity RMSE',f'{m["velocity_rmse_mm_s"]:.3f} mm/s')
+        b4.metric('Position 95% interval coverage',f'{m["position_95pct_coverage"]*100:.1f}%')
+        for message in bench['warnings']: st.warning(message)
+        if not bench['warnings']:
+            st.success('No diagnostic flags in this specific benchmark run. '
+                       'This is not a certification; repeat with other seeds and disturbances.')
+        st.markdown('#### Recovered covariance and Kalman gain')
+        dc=st.columns(4)
+        for col,(name,matrix) in zip(dc,[
+            ('R injected',bench['training']['R_true']),
+            ('R estimated',bench['R_est']),
+            ('Q injected',bench['training']['Q_true']),
+            ('Q estimated',f['Q'])]):
+            with col:
+                st.markdown(f'**{name}**')
+                st.dataframe(pd.DataFrame(matrix).style.format('{:.5e}'),hide_index=True)
+        st.caption('R is estimated exclusively from independent stationary calibration noise. '
+                   'Q is fitted on a separate dynamic training run using Gaussian innovation '
+                   'likelihood. S and K are calculated at every measurement update.')
+        with st.expander('Final innovation covariance S and gain K',expanded=False):
+            cc1,cc2=st.columns(2)
+            with cc1:
+                st.markdown('**S, final validation sample**')
+                st.dataframe(pd.DataFrame(f['S'][-1]).style.format('{:.6e}'),hide_index=True)
+            with cc2:
+                st.markdown('**K, final validation sample**')
+                st.dataframe(pd.DataFrame(f['gains'][-1]).style.format('{:.6e}'),hide_index=True)
+        chart_df=pd.DataFrame(dict(
+            time_s=val['t'],truth_mm=val['truth'][:,0]*1000,
+            measured_mm=val['y'][:,0]*1000,kalman_mm=f['estimates'][:,0]*1000,
+            truth_velocity_mm_s=val['truth'][:,1]*1000,
+            kalman_velocity_mm_s=f['estimates'][:,1]*1000,
+            truth_acc_ms2=val['acc_truth'],measured_acc_ms2=val['y'][:,1],
+            kalman_acc_ms2=f['C'][1]@f['estimates'].T+f['D'][1,0]*val['u'],
+            NIS=f['nis'],K_z_from_encoder=f['gains'][:,0,0],
+            K_velocity_from_acceleration=f['gains'][:,1,1]))
+        st.plotly_chart(go.Figure([
+            go.Scatter(x=chart_df['time_s'],y=chart_df[key],name=label,mode='lines')
+            for key,label in [('truth_mm','Known plant truth'),('measured_mm','Noisy encoder'),
+                              ('kalman_mm','Kalman estimate')]
+            ]).update_layout(template='plotly_dark',title='Validation carrier position',
+                             xaxis_title='Time [s]',yaxis_title='Position [mm]',height=360),
+                        use_container_width=True)
+        left,right=st.columns(2)
+        with left:
+            st.plotly_chart(go.Figure([
+                go.Scatter(x=chart_df['time_s'],y=chart_df[key],name=label)
+                for key,label in [('truth_velocity_mm_s','Known true velocity'),
+                                  ('kalman_velocity_mm_s','Kalman estimated velocity')]
+                ]).update_layout(template='plotly_dark',height=300,
+                       title='Velocity estimation',xaxis_title='Time [s]',
+                       yaxis_title='Velocity [mm/s]'),use_container_width=True)
+        with right:
+            st.plotly_chart(go.Figure([
+                go.Scatter(x=chart_df['time_s'],y=chart_df[key],name=label)
+                for key,label in [('truth_acc_ms2','Plant acceleration'),
+                                  ('measured_acc_ms2','Noisy accelerometer'),
+                                  ('kalman_acc_ms2','Linear-model estimated acceleration')]
+                ]).update_layout(template='plotly_dark',height=300,
+                       title='Acceleration measurement vs model',
+                       xaxis_title='Time [s]',yaxis_title='Acceleration [m/s²]'),
+                       use_container_width=True)
+        left,right=st.columns(2)
+        with left:
+            st.line_chart(chart_df.set_index('time_s')[['NIS']],height=240)
+        with right:
+            st.line_chart(chart_df.set_index('time_s')[
+                ['K_z_from_encoder','K_velocity_from_acceleration']],height=240)
+        st.markdown('#### Export the independently validated experiment')
+        e1,e2=st.columns(2)
+        with e1:
+            st.download_button('Export validation time series CSV',
+                   chart_df.to_csv(index=False).encode('utf-8'),
+                   'AKUS_v3_synthetic_validation.csv',mime='text/csv')
+        with e2:
+            st.download_button('Export Q/R/S/K research report JSON',
+                   json.dumps(report_json_ready(bench),indent=2).encode('utf-8'),
+                   'AKUS_v3_synthetic_benchmark_report.json',mime='application/json')
+        st.caption('This benchmark runs offline; the truth is artificially generated. '
+                   'The nonlinear case intentionally violates the estimator assumptions. '
+                   'A good match here does not prove the real Beckhoff drives or sensors are calibrated.')
+    else:
+        st.caption('Use the default matched linear run first. You can then switch to the '
+                   'Jan nonlinear Euler plant without changing the synthetic noise settings.')
+
+
+# v4: standalone acceleration-first Kalman estimator and Earth-hardware replay.
+# NOT Jan's existing two-state position/velocity filter; Q and R differ by model.
+with tabs[10]:
+    st.subheader('Acceleration KF · simulated truth and real Earth-hardware replay')
+    st.caption('Primary output: acceleration [m/s²]. The existing carrier animation, '
+               'position/velocity Kalman research, and other operator pages remain unchanged.')
+    st.info('This is a separate 1-state acceleration-residual Kalman filter, with '
+            'Q_step = q × sample_period, R from stationary acceleration noise, '
+            'and S/K calculated at every update. These are NOT the 2×2 matrices '
+            'from Jan’s position/velocity Kalman model.')
+    source_acc=st.radio('Acceleration dataset',
+        ['Synthetic · Jan linear physics', 'Synthetic · Jan nonlinear Euler physics',
+         'Real Earth hardware · included Scope excerpt', 'Real Earth hardware · upload CSV'],
+        horizontal=False,key='v4_acc_source')
+    is_synthetic=source_acc.startswith('Synthetic')
+    with st.form('v4_acceleration_form'):
+        f1,f2,f3=st.columns(3)
+        with f1:
+            dt_acc=st.selectbox('Analysis sample period (ms)', [0.5,2,5,10,20,50],index=3,
+                help='The 0.5ms setting applies mainly to real 2kHz recordings; synthetic runs match their own chosen sampling period.')
+            prior_choice=st.selectbox('Acceleration prediction',
+                ['Measured acceleration only (random-walk model)',
+                 'Jan linear physics force prediction (experimental)'],
+                index=1 if is_synthetic else 0)
+        with f2:
+            sd_acc=st.number_input('Synthetic sensor noise SD [m/s²]',.0001,1.0,.04,format='%.5f',disabled=not is_synthetic)
+            n_samples=st.number_input('Samples per synthetic run',min_value=200,max_value=3000,value=950,step=50,disabled=not is_synthetic)
+        with f3:
+            seed_acc=st.number_input('Synthetic random seed',0,1000000,42,1,disabled=not is_synthetic)
+            use_fit=st.checkbox('Identify acceleration Q on training interval',value=True)
+        uploaded_acc=None
+        if source_acc.endswith('upload CSV'):
+            uploaded_acc=st.file_uploader('TwinCAT CSV · 134 MB full file is supported by Streamlit when upload limit permits',type=['csv'],key='acc_uploaded')
+            start_acc=st.number_input('Start of moving interval [s]',min_value=0.0,value=230.0,step=1.0)
+            duration_acc=st.number_input('Duration [s]',min_value=1.0,max_value=180.,value=10.,step=1.)
+        else:
+            start_acc=230.;duration_acc=10.
+        go_acc=st.form_submit_button('Estimate R / Q and filter acceleration',type='primary')
+    if go_acc:
+        try:
+            with st.spinner('Estimating acceleration uncertainty and validating...'):
+                dt_target=dt_acc*0.001
+                if is_synthetic:
+                    params=ModelParameters(
+                        m_platform=float(sim.config.m_platform_kg),
+                        m_equivalent=float(sim.config.m_equivalent_kg),
+                        b_viscous=float(sim.config.friction_viscous_ns_m),
+                        friction_coulomb=float(sim.config.friction_coulomb_n),
+                        friction_position=float(sim.config.friction_position_n_m2),
+                        z_reference=float(sim.config.friction_center_m))
+                    plant='linear' if 'linear physics' in source_acc else 'jan_euler'
+                    train_acc=generate_jan_synthetic(dt=dt_target,N=int(n_samples),p=params,
+                        plant=plant,seed=int(seed_acc),scenario='training',sensor_std_a=float(sd_acc))
+                    hold_acc=generate_jan_synthetic(dt=dt_target,N=int(n_samples),p=params,
+                        plant=plant,seed=int(seed_acc)+7919,scenario='validation',sensor_std_a=float(sd_acc))
+                    Racc,corr=estimate_acceleration_r(train_acc['calibration_residuals'][:,1])
+                    a_train=train_acc['y'][:,1]; a_hold=hold_acc['y'][:,1]
+                    t_hold=hold_acc['t']; truth_acc=hold_acc['acc_truth']
+                    compare_acc=None
+                    if prior_choice.startswith('Jan linear'):
+                        prior_train=jan_linear_acceleration_prior(train_acc['u'],dt_target,params)
+                        prior_hold=jan_linear_acceleration_prior(hold_acc['u'],dt_target,params)
+                    else:
+                        prior_train=prior_hold=None
+                    source_note='Synthetic known-truth, independent training/validation seeds and force profiles'
+                    actual_dt=dt_target
+                else:
+                    stationary_acc=pd.read_csv(ROOT/'examples'/'akus_stationary_REAL.csv')
+                    if uploaded_acc is None and source_acc.endswith('upload CSV'):
+                        raise ValueError('Upload the TwinCAT Scope CSV first')
+                    if uploaded_acc is None:
+                        motion_acc=pd.read_csv(ROOT/'examples'/'akus_movement_REAL.csv')
+                    else:
+                        full_acc=load_twincat_csv(uploaded_acc)
+                        motion_acc=full_acc.loc[(full_acc.time_s>=start_acc)&
+                            (full_acc.time_s<start_acc+duration_acc)].copy()
+                        if len(motion_acc)<50:raise ValueError('Selected interval has insufficient samples')
+                    # Decimate with anti-alias low-pass *before* comparing samples
+                    # or estimating R at the chosen estimator sample rate.
+                    motion_ds,actual_dt=_decimate(motion_acc,dt_target)
+                    stationary_ds,_=_decimate(stationary_acc,dt_target)
+                    g0=float(stationary_acc['fAccZUnfiltered'].median())
+                    # The raw sensor channel is specific force in g, ~1g at rest.
+                    # Subtracting a stationary baseline gives an Earth-relative
+                    # dynamic acceleration estimate, NOT a full sensor calibration.
+                    a_hold=(motion_ds['fAccZUnfiltered'].to_numpy(float)-g0)*9.80665
+                    cal_acc=(stationary_ds['fAccZUnfiltered'].to_numpy(float)-g0)*9.80665
+                    Racc,corr=estimate_acceleration_r(cal_acc)
+                    t_hold=motion_ds['time_s'].to_numpy(float)
+                    truth_acc=None
+                    compare_acc=motion_ds['fAccZ'].to_numpy(float)-float(stationary_ds['fAccZ'].mean())
+                    if prior_choice.startswith('Jan linear'):
+                        p=ModelParameters()
+                        # Torque-to-force is NOT calibrated. The optional prior is
+                        # exploratory only. Use by explicit operator selection.
+                        force=p.motor_force(motion_ds['fTorque1'].to_numpy(float),
+                                            motion_ds['fTorque2'].to_numpy(float))
+                        u=p.u_from_force(force)
+                        prior_hold=jan_linear_acceleration_prior(u,actual_dt,p)
+                    else:
+                        prior_hold=None
+                    source_note='Real Earth hardware; no independent acceleration truth. Scope low-pass is NOT ground truth.'
+                    # Time-wise training/validation on selected motion interval;
+                    # this is less independent than two distinct experiment runs.
+                    cut=max(60,min(len(a_hold)-30,int(len(a_hold)*.55)))
+                    a_train=a_hold[:cut]
+                    prior_train=prior_hold[:cut] if prior_hold is not None else None
+                if use_fit:
+                    q_acc,fit_acc=fit_acceleration_q(a_train,actual_dt,Racc,
+                        prior_ms2=prior_train)
+                else:
+                    q_acc=1e-4
+                    fit_acc={'near_bound':False,'converged':True,'note':'Manually selected q, not identified'}
+                result_acc=run_acceleration_filter(a_hold,actual_dt,Racc,q_acc,prior_ms2=prior_hold)
+                # For real hardware use the second interval as diagnostics, not
+                # an independent experiment. For synthetic run use held-out run.
+                burn_acc=(0 if is_synthetic else cut)
+                metrics_acc=acceleration_diagnostics(result_acc,truth_acc,burn=burn_acc)
+                if truth_acc is not None:
+                    metrics_acc['raw_acc_rmse_ms2']=float(np.sqrt(np.mean((a_hold-truth_acc)**2)))
+                export_acc=pd.DataFrame({'time_s':t_hold,'acc_measured_ms2':a_hold,
+                    'acc_kalman_ms2':result_acc['estimated_acc_ms2'],
+                    'acc_prior_ms2':result_acc['prior_ms2'],
+                    'innovation_ms2':result_acc['innovation'],'K':result_acc['K'],
+                    'S':result_acc['S'],'NIS':result_acc['nis']})
+                if truth_acc is not None:export_acc['acc_truth_ms2']=truth_acc
+                if compare_acc is not None:export_acc['twinCAT_filtered_acc_ms2_centered']=compare_acc
+                st.session_state.v4_acc_result={'df':export_acc,'R':Racc,'q':q_acc,
+                    'Q':result_acc['Q_step'],'corr':corr,'fit':fit_acc,'metrics':metrics_acc,
+                    'source':source_note,'synthetic':is_synthetic,'training_cut':burn_acc}
+        except Exception as ex:
+            st.session_state.pop('v4_acc_result',None)
+            st.error(f'Acceleration research run failed: {ex}')
+    if 'v4_acc_result' in st.session_state:
+        ar=st.session_state.v4_acc_result
+        st.caption(ar['source'])
+        c1,c2,c3,c4=st.columns(4)
+        c1.metric('Acceleration R [(m/s²)²]',f'{ar["R"]:.5g}')
+        c2.metric('Identified q [(m/s²)²/s]',f'{ar["q"]:.5g}')
+        c3.metric('Q per sample [(m/s²)²]',f'{ar["Q"]:.5g}')
+        c4.metric('Last Kalman gain K',f'{ar["df"]["K"].iloc[-1]:.4g}')
+        if ar['fit'].get('near_bound'):
+            st.warning('Estimated q is near the optimization boundary: not reliably identified. '
+                       'Check model mismatch, bias, filtering bandwidth and measurement assumptions.')
+        if abs(ar['corr'])>.2:
+            st.warning('Stationary acceleration samples are correlated at this chosen sample rate. '
+                       'R is only a preliminary covariance under a white-noise assumption.')
+        if not ar['synthetic']:
+            st.warning('Hardware replay is from Earth, not free fall. A stationary +1g baseline '
+                       'has been subtracted, but gain, offset drift and torque direction are not calibrated. '
+                       'The TwinCAT filtered channel is a comparison, never ground truth.')
+        st.markdown('#### Acceleration: measurement vs Kalman estimate')
+        ac=ar['df'];fig=go.Figure()
+        series=[('acc_measured_ms2','Raw averaged accelerometer'),('acc_kalman_ms2','Kalman acceleration'),
+                ('acc_truth_ms2','Synthetic ground truth'),('twinCAT_filtered_acc_ms2_centered','TwinCAT 10 Hz low-pass')]
+        for k,name in series:
+            if k in ac.columns:fig.add_trace(go.Scatter(x=ac.time_s,y=ac[k],name=name,mode='lines'))
+        fig.update_layout(template='plotly_dark',height=430,xaxis_title='Time [s]',
+                          yaxis_title='Dynamic acceleration [m/s²]',hovermode='x unified')
+        st.plotly_chart(fig,use_container_width=True)
+        ca,cb=st.columns(2)
+        with ca:
+            st.line_chart(ac.set_index('time_s')[['K','S']],height=250)
+        with cb:
+            st.line_chart(ac.set_index('time_s')[['NIS']],height=250)
+        st.json({k:float(v) if isinstance(v,(int,float,np.floating)) else v
+                 for k,v in ar['metrics'].items()})
+        if 'kalman_acc_rmse_ms2' in ar['metrics']:
+            st.caption('Synthetic ground-truth RMSE: raw '
+                       f'{ar["metrics"]["raw_acc_rmse_ms2"]:.5g} m/s² vs. Kalman '
+                       f'{ar["metrics"]["kalman_acc_rmse_ms2"]:.5g} m/s².')
+        st.caption('Innovation diagnostics require white residuals to interpret nominal NIS '
+                   'thresholds. Smoothness alone does not prove accuracy. '
+                   'This 1-state Q must not be copied into Jan’s 2-state position/velocity filter.')
+        da,db=st.columns(2)
+        with da:
+            st.download_button('Download acceleration output CSV',
+                ac.to_csv(index=False).encode('utf-8'),file_name='AKUS_Acceleration_Filter.csv',mime='text/csv')
+        with db:
+            report={'R_acc':ar['R'],'q_acc':ar['q'],'Q_acc_per_sample':ar['Q'],
+                    'K_last':float(ac.K.iloc[-1]),'S_last':float(ac.S.iloc[-1]),
+                    'stationary_lag1':ar['corr'],'fit':ar['fit'],'metrics':ar['metrics'],
+                    'caveat':ar['source']}
+            st.download_button('Download acceleration identification JSON',
+                json.dumps(report,indent=2),file_name='AKUS_Acceleration_Identification.json',mime='application/json')
+    else:
+        st.caption('Choose simulated Jan physics or real Earth-hardware replay, then run '
+                   'the acceleration identification above. This does not drive the real servos.')

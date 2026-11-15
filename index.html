@@ -146,7 +146,7 @@
         </div>
       </div>
 
-      <!-- TABS NAVIGATION -->
+        <!-- TABS NAVIGATION -->
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
         <div class="flex flex-wrap gap-1.5 border-b border-[var(--border)] pb-3 mb-4" id="tabButtons">
           <button onclick="switchTab(0)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-600 text-white">Experiment</button>
@@ -157,6 +157,9 @@
           <button onclick="switchTab(5)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Analysis / Scopes</button>
           <button onclick="switchTab(6)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Diagnostics</button>
           <button onclick="switchTab(7)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Project reference</button>
+          <button onclick="switchTab(8)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Kalman research</button>
+          <button onclick="switchTab(9)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Simulation Q/R benchmark</button>
+          <button onclick="switchTab(10)" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--background)] text-[var(--muted-foreground)]">Acceleration KF (v4)</button>
         </div>
 
         <!-- TAB 0: EXPERIMENT -->
@@ -432,13 +435,166 @@
 
         <!-- TAB 7: PROJECT REFERENCE -->
         <div id="tab7" class="tab-pane hidden space-y-3">
-          <h3 class="text-sm font-bold">Source-to-dashboard coverage &amp; constants</h3>
+          <h3 class="text-sm font-bold">Source-to-dashboard coverage &amp; constants (v4)</h3>
           <div class="bg-[var(--background)] border border-[var(--border)] rounded-xl p-3 font-mono text-xs space-y-1">
             <div>1 motor revolution = 360° = 5 mm carrier travel</div>
             <div>44,000° = 611.11 mm simulated upper limit</div>
             <div>Experiment travel guard = 43,280° = 601.11 mm</div>
             <div>Nominal gravitation = 9.80665 m/s²</div>
+            <div class="text-sky-400 pt-1">v4 additions: Tab 8 (2-state Kalman research), Tab 9 (Controlled Q/R benchmark), Tab 10 (1-state Acceleration KF + Earth-hardware replay)</div>
           </div>
+        </div>
+
+        <!-- TAB 8: KALMAN RESEARCH (2-State Position/Velocity) -->
+        <div id="tab8" class="tab-pane hidden space-y-4">
+          <div>
+            <h3 class="text-sm font-bold">Kalman research · Simulation + TwinCAT sensor recordings</h3>
+            <p class="text-xs text-[var(--muted-foreground)]">Jan two-state damped physics model · R from stationary sample · structured Q via innovation likelihood · S and K calculated per update. OFFLINE only.</p>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 bg-[var(--background)] border border-[var(--border)] rounded-xl p-3">
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold">Data source</label>
+              <select id="kf8Source" onchange="toggleKf8Source()" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="sim">Current carrier simulation</option>
+                <option value="real">Included real AKUS recording (Nov 5, 2026)</option>
+              </select>
+              <label class="flex items-center gap-2 text-xs cursor-pointer pt-1">
+                <input id="kf8FitQ" type="checkbox" checked class="accent-sky-500" />
+                <span>Estimate Q from training measurements (innovation likelihood)</span>
+              </label>
+            </div>
+            <div id="kf8SimParams" class="space-y-2">
+              <label class="block text-xs font-semibold">Synthetic encoder noise SD [mm]</label>
+              <input id="kf8EncSd" type="number" step="0.05" min="0.001" value="0.200" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              <label class="block text-xs font-semibold">Synthetic acceleration noise SD [m/s²]</label>
+              <input id="kf8AccSd" type="number" step="0.005" min="0.0001" value="0.015" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+            </div>
+            <div id="kf8RealParams" class="hidden space-y-2">
+              <label class="block text-xs font-semibold">Kalman sample period [ms]</label>
+              <select id="kf8DtMs" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="5">5 ms</option>
+                <option value="10">10 ms</option>
+                <option value="20" selected>20 ms</option>
+                <option value="50">50 ms</option>
+              </select>
+              <label class="block text-xs font-semibold">Encoder sign / Torque sign</label>
+              <div class="grid grid-cols-2 gap-2">
+                <select id="kf8SignZ" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs"><option value="-1" selected>z sign: -1</option><option value="1">z sign: +1</option></select>
+                <select id="kf8SignTau" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs"><option value="1" selected>τ sign: +1</option><option value="-1">τ sign: -1</option></select>
+              </div>
+            </div>
+            <div class="space-y-2 flex flex-col justify-between">
+              <div>
+                <label class="block text-xs font-semibold mb-1">Provisional qₐ [m²/s³] (when not fitting)</label>
+                <input id="kf8ManualQ" type="number" step="0.0001" value="0.0001" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              </div>
+              <button onclick="runKalmanResearchTab8()" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-3 rounded-lg text-xs transition">▶ Analyze Q / R / S / K</button>
+            </div>
+          </div>
+          <div id="kf8Metrics" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5"></div>
+          <canvas id="kf8Canvas" width="980" height="320" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
+          <div id="kf8Matrices" class="grid grid-cols-2 md:grid-cols-4 gap-2.5 font-mono text-xs"></div>
+        </div>
+
+        <!-- TAB 9: SIMULATION Q/R BENCHMARK -->
+        <div id="tab9" class="tab-pane hidden space-y-4">
+          <div>
+            <h3 class="text-sm font-bold">Jan physics · controlled Q/R identification benchmark</h3>
+            <p class="text-xs text-[var(--muted-foreground)]">Source-aligned offline plant vs. corrected linear Kalman estimator. Independent training and validation experiments with known ground truth.</p>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 bg-[var(--background)] border border-[var(--border)] rounded-xl p-3">
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold">Truth plant</label>
+              <select id="bm9Plant" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="linear">Matched linear plant</option>
+                <option value="jan_euler">Jan nonlinear Euler plant</option>
+              </select>
+              <label class="block text-xs font-semibold">Sample time [ms] / Samples</label>
+              <div class="grid grid-cols-2 gap-2">
+                <select id="bm9DtMs" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs">
+                  <option value="10">10 ms</option>
+                  <option value="20" selected>20 ms</option>
+                  <option value="50">50 ms</option>
+                </select>
+                <input id="bm9Samples" type="number" min="200" max="2000" step="50" value="850" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
+              </div>
+            </div>
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold">Known process intensity qₐ [m²/s³]</label>
+              <input id="bm9TrueQ" type="number" step="0.0001" value="0.0001" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs" />
+              <label class="block text-xs font-semibold">Encoder SD [mm] / Accel SD [m/s²]</label>
+              <div class="grid grid-cols-2 gap-2">
+                <input id="bm9SdZ" type="number" step="0.05" value="0.35" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
+                <input id="bm9SdA" type="number" step="0.01" value="0.04" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
+              </div>
+            </div>
+            <div class="space-y-2 flex flex-col justify-between">
+              <label class="flex items-center gap-2 text-xs cursor-pointer pt-1">
+                <input id="bm9FitQ" type="checkbox" checked class="accent-sky-500" />
+                <span>Estimate q from training data</span>
+              </label>
+              <button onclick="runBenchmarkTab9()" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-3 rounded-lg text-xs transition">▶ Run train / held-out benchmark</button>
+            </div>
+          </div>
+          <div id="bm9Metrics" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5"></div>
+          <canvas id="bm9Canvas" width="980" height="320" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
+        </div>
+
+        <!-- TAB 10: ACCELERATION KF (v4) -->
+        <div id="tab10" class="tab-pane hidden space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-bold">Acceleration KF (v4) · Simulated truth &amp; real Earth-hardware replay</h3>
+              <p class="text-xs text-[var(--muted-foreground)]">1-state acceleration-residual Kalman filter: Q_step = q × dt, R from stationary acceleration noise, S and K updated every sample.</p>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="exportAccKfCSV()" class="bg-sky-600 hover:bg-sky-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold">Download Accel CSV</button>
+              <button onclick="exportAccKfJSON()" class="bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs font-semibold">Download Report JSON</button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 bg-[var(--background)] border border-[var(--border)] rounded-xl p-3">
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold">Acceleration dataset</label>
+              <select id="acc10Source" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="syn_linear">Synthetic · Jan linear physics</option>
+                <option value="syn_nonlinear">Synthetic · Jan nonlinear Euler physics</option>
+                <option value="real_bundled">Real Earth hardware · included Scope excerpt</option>
+              </select>
+              <label class="block text-xs font-semibold">Analysis sample period [ms]</label>
+              <select id="acc10DtMs" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="0.5">0.5 ms (2 kHz raw)</option>
+                <option value="2">2 ms</option>
+                <option value="5">5 ms</option>
+                <option value="10" selected>10 ms</option>
+                <option value="20">20 ms</option>
+                <option value="50">50 ms</option>
+              </select>
+            </div>
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold">Acceleration prediction prior</label>
+              <select id="acc10Prior" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
+                <option value="rw">Measured acceleration only (random-walk model)</option>
+                <option value="jan">Jan linear physics force prediction (experimental)</option>
+              </select>
+              <label class="block text-xs font-semibold">Synthetic sensor noise SD [m/s²] / Samples</label>
+              <div class="grid grid-cols-2 gap-2">
+                <input id="acc10Sd" type="number" step="0.005" value="0.04" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
+                <input id="acc10Samples" type="number" step="50" min="200" max="3000" value="950" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
+              </div>
+            </div>
+            <div class="space-y-2 flex flex-col justify-between">
+              <label class="flex items-center gap-2 text-xs cursor-pointer pt-1">
+                <input id="acc10FitQ" type="checkbox" checked class="accent-sky-500" />
+                <span>Identify acceleration Q on training interval</span>
+              </label>
+              <div id="acc10StatusNote" class="text-xs text-[var(--muted-foreground)]">Select dataset and click Estimate R / Q.</div>
+              <button onclick="runAccelerationKfTab10()" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-3 rounded-lg text-xs transition">▶ Estimate R / Q and filter acceleration</button>
+            </div>
+          </div>
+
+          <div id="acc10Metrics" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5"></div>
+          <canvas id="acc10Canvas" width="980" height="360" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
         </div>
 
       </div>
@@ -1084,6 +1240,622 @@
 
     function exportEventsJSON() {
       downloadFile('akus_simulation_events.json', JSON.stringify(sim.events, null, 2), 'application/json');
+    }
+
+    // =========================================================================
+    // v4 KALMAN RESEARCH, CONTROLLED BENCHMARK & ACCELERATION KF ENGINES
+    // =========================================================================
+    let lastAccKfReport = null;
+    let cachedRealMotion = null;
+    let cachedRealStationary = null;
+
+    function mulberry32(seed) {
+      let t = seed >>> 0;
+      return function() {
+        t += 0x6D2B79F5;
+        let r = Math.imul(t ^ (t >>> 15), t | 1);
+        r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
+        return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function randn(rng) {
+      let u = 0, v = 0;
+      while (u === 0) u = rng();
+      while (v === 0) v = rng();
+      return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
+    function getModelParams() {
+      const c = sim.config;
+      return {
+        m_platform: c.m_platform_kg,
+        m_equivalent: c.m_equivalent_kg,
+        effective_mass: c.m_platform_kg + c.m_equivalent_kg,
+        b_viscous: c.friction_viscous_ns_m,
+        friction_coulomb: c.friction_coulomb_n,
+        friction_position: c.friction_position_n_m2,
+        z_reference: c.friction_center_m,
+        pitch: 0.005,
+        gravity: GRAVITY
+      };
+    }
+
+    function janMatrices(dt, p) {
+      const M = p.effective_mass;
+      const alpha = p.b_viscous / M;
+      let A, B;
+      if (alpha > 1e-8) {
+        const e1 = Math.exp(-alpha * dt);
+        A = [[1.0, (1.0 - e1) / alpha], [0.0, e1]];
+        B = [(alpha * dt - (1.0 - e1)) / (M * alpha * alpha), (1.0 - e1) / (M * alpha)];
+      } else {
+        A = [[1.0, dt], [0.0, 1.0]];
+        B = [0.5 * dt * dt / M, dt / M];
+      }
+      const C = [[1.0, 0.0], [0.0, -alpha]];
+      const D = [0.0, 1.0 / M];
+      return { A, B, C, D, alpha };
+    }
+
+    function janVanLoanQ(dt, alpha, qa) {
+      if (alpha > 1e-8) {
+        const e1 = Math.exp(-alpha * dt);
+        const e2 = Math.exp(-2.0 * alpha * dt);
+        const q00 = qa * (2.0 * alpha * dt - 3.0 + 4.0 * e1 - e2) / (2.0 * Math.pow(alpha, 3));
+        const q01 = qa * Math.pow(1.0 - e1, 2) / (2.0 * alpha * alpha);
+        const q11 = qa * (1.0 - e2) / (2.0 * alpha);
+        return [[q00, q01], [q01, q11]];
+      }
+      return [
+        [qa * Math.pow(dt, 3) / 3.0, qa * 0.5 * dt * dt],
+        [qa * 0.5 * dt * dt, qa * dt]
+      ];
+    }
+
+    function mat2Mul(X, Y) {
+      return [
+        [X[0][0] * Y[0][0] + X[0][1] * Y[1][0], X[0][0] * Y[0][1] + X[0][1] * Y[1][1]],
+        [X[1][0] * Y[0][0] + X[1][1] * Y[1][0], X[1][0] * Y[0][1] + X[1][1] * Y[1][1]]
+      ];
+    }
+
+    function mat2Trans(X) {
+      return [[X[0][0], X[1][0]], [X[0][1], X[1][1]]];
+    }
+
+    function mat2Add(X, Y) {
+      return [
+        [X[0][0] + Y[0][0], X[0][1] + Y[0][1]],
+        [X[1][0] + Y[1][0], X[1][1] + Y[1][1]]
+      ];
+    }
+
+    function mat2Inv(S) {
+      const det = S[0][0] * S[1][1] - S[0][1] * S[1][0];
+      const invDet = 1.0 / (Math.abs(det) < 1e-24 ? 1e-24 : det);
+      return {
+        det: Math.max(1e-24, det),
+        inv: [
+          [S[1][1] * invDet, -S[0][1] * invDet],
+          [-S[1][0] * invDet, S[0][0] * invDet]
+        ]
+      };
+    }
+
+    function runFilter2State(y, u, dt, p, R, qa) {
+      const { A, B, C, D, alpha } = janMatrices(dt, p);
+      const Q = janVanLoanQ(dt, alpha, qa);
+      const AT = mat2Trans(A), CT = mat2Trans(C);
+      let x = [Number.isFinite(y[0][0]) ? y[0][0] : p.z_reference, 0.0];
+      let P = [[Math.max(R[0][0], 1e-10), 0.0], [0.0, 0.0004]];
+      const N = u.length;
+      const estimates = [], nis = [], gains = [], S_list = [];
+      let totalNll = 0.0;
+
+      for (let k = 0; k < N; k++) {
+        if (k > 0) {
+          const uk1 = u[k - 1];
+          x = [
+            A[0][0] * x[0] + A[0][1] * x[1] + B[0] * uk1,
+            A[1][0] * x[0] + A[1][1] * x[1] + B[1] * uk1
+          ];
+          P = mat2Add(mat2Mul(mat2Mul(A, P), AT), Q);
+        }
+        const ypred = [
+          C[0][0] * x[0] + C[0][1] * x[1] + D[0] * u[k],
+          C[1][0] * x[0] + C[1][1] * x[1] + D[1] * u[k]
+        ];
+        const r = [y[k][0] - ypred[0], y[k][1] - ypred[1]];
+        const S = mat2Add(mat2Mul(mat2Mul(C, P), CT), R);
+        const { det, inv: Sinv } = mat2Inv(S);
+        const K = mat2Mul(mat2Mul(P, CT), Sinv);
+        x = [
+          x[0] + K[0][0] * r[0] + K[0][1] * r[1],
+          x[1] + K[1][0] * r[0] + K[1][1] * r[1]
+        ];
+        const KC = mat2Mul(K, C);
+        const M = [[1.0 - KC[0][0], -KC[0][1]], [-KC[1][0], 1.0 - KC[1][1]]];
+        const Joseph1 = mat2Mul(mat2Mul(M, P), mat2Trans(M));
+        const Joseph2 = mat2Mul(mat2Mul(K, R), mat2Trans(K));
+        P = mat2Add(Joseph1, Joseph2);
+
+        const Sinv_r = [
+          Sinv[0][0] * r[0] + Sinv[0][1] * r[1],
+          Sinv[1][0] * r[0] + Sinv[1][1] * r[1]
+        ];
+        const err = r[0] * Sinv_r[0] + r[1] * Sinv_r[1];
+        const stepNll = 0.5 * (2.0 * Math.log(2.0 * Math.PI) + Math.log(det) + err);
+        totalNll += stepNll;
+        estimates.push([x[0], x[1]]);
+        nis.push(err);
+        gains.push(K);
+        S_list.push(S);
+      }
+      return { estimates, nis, gains, S: S_list, Q, R, totalNll };
+    }
+
+    function fitQ2State(yTrain, uTrain, dt, p, R) {
+      let a = Math.log(1e-9), b = Math.log(1.0);
+      const gr = (Math.sqrt(5) - 1) / 2;
+      let c = b - gr * (b - a), d = a + gr * (b - a);
+      const evalObj = (logQ) => runFilter2State(yTrain, uTrain, dt, p, R, Math.exp(logQ)).totalNll;
+      let fc = evalObj(c), fd = evalObj(d);
+      for (let iter = 0; iter < 32; iter++) {
+        if (fc < fd) {
+          b = d; d = c; fd = fc; c = b - gr * (b - a); fc = evalObj(c);
+        } else {
+          a = c; c = d; fc = fd; d = a + gr * (b - a); fd = evalObj(d);
+        }
+      }
+      return Math.exp(0.5 * (a + b));
+    }
+
+    // 1-State Acceleration KF (akuskf/acceleration.py exact replica)
+    function runAccelerationFilter(measuredMs2, dt, r, q, priorMs2 = null) {
+      const N = measuredMs2.length;
+      const Q = q * dt;
+      let d = 0.0;
+      let P = Math.max(r, 1e-12);
+      const estimated = new Array(N);
+      const gains = new Array(N);
+      const sCov = new Array(N);
+      const innovations = new Array(N);
+      const nis = new Array(N);
+      let nll2 = 0.0;
+
+      for (let k = 0; k < N; k++) {
+        const base = priorMs2 ? priorMs2[k] : 0.0;
+        const P_minus = P + Q;
+        const S = P_minus + r;
+        const nu = (measuredMs2[k] - base) - d;
+        const K = P_minus / S;
+        d += K * nu;
+        P = (1.0 - K) * (1.0 - K) * P_minus + K * K * r;
+        estimated[k] = base + d;
+        gains[k] = K;
+        sCov[k] = S;
+        innovations[k] = nu;
+        nis[k] = (nu * nu) / S;
+        nll2 += Math.log(2.0 * Math.PI * S) + nis[k];
+      }
+      return { estimated, K: gains, S: sCov, Q_step: Q, R: r, innovations, nis, nll2 };
+    }
+
+    function fitAccelerationQ(trainAccMs2, dt, r, priorMs2 = null) {
+      let a = Math.log(1e-10), b = Math.log(10.0);
+      const gr = (Math.sqrt(5) - 1) / 2;
+      let c = b - gr * (b - a), d = a + gr * (b - a);
+      const evalObj = (logQ) => runAccelerationFilter(trainAccMs2, dt, r, Math.exp(logQ), priorMs2).nll2;
+      let fc = evalObj(c), fd = evalObj(d);
+      for (let iter = 0; iter < 35; iter++) {
+        if (fc < fd) {
+          b = d; d = c; fd = fc; c = b - gr * (b - a); fc = evalObj(c);
+        } else {
+          a = c; c = d; fc = fd; d = a + gr * (b - a); fd = evalObj(d);
+        }
+      }
+      return Math.exp(0.5 * (a + b));
+    }
+
+    function generateJanSynthetic(dt, N, p, plant, seed, scenario, sdZ, sdA, trueQ) {
+      const rng = mulberry32(seed);
+      const { A, B, alpha } = janMatrices(dt, p);
+      const Q = janVanLoanQ(dt, alpha, trueQ);
+      // Cholesky of 2x2 Q
+      const L00 = Math.sqrt(Math.max(1e-24, Q[0][0]));
+      const L10 = Q[0][1] / L00;
+      const L11 = Math.sqrt(Math.max(1e-24, Q[1][1] - L10 * L10));
+
+      const t = new Array(N), u = new Array(N), truth = new Array(N), accTruth = new Array(N), y = new Array(N);
+      let z = p.z_reference, v = 0.0;
+
+      for (let k = 0; k < N; k++) {
+        const tk = k * dt;
+        t[k] = tk;
+        u[k] = scenario === 'training'
+          ? 390 * Math.sin(2 * Math.PI * tk / 4.0) + 145 * Math.sin(2 * Math.PI * tk / 1.7)
+          : 340 * Math.sin(2 * Math.PI * tk / 5.7 + 0.3) + 185 * Math.sin(2 * Math.PI * tk / 2.3);
+
+        if (k > 0) {
+          const w0 = randn(rng), w1 = randn(rng);
+          const dz = L00 * w0, dv = L10 * w0 + L11 * w1;
+          const uk1 = u[k - 1];
+          if (plant === 'linear') {
+            const zn = A[0][0] * z + A[0][1] * v + B[0] * uk1 + dz;
+            const vn = A[1][0] * z + A[1][1] * v + B[1] * uk1 + dv;
+            z = zn; v = vn;
+          } else {
+            const posTerm = p.friction_coulomb + p.friction_position * Math.pow(z - p.z_reference, 2);
+            const signedFric = uk1 !== 0 ? (Math.sign(uk1) * posTerm + p.b_viscous * v) : 0.0;
+            const resForce = Math.abs(uk1) < Math.abs(signedFric) ? 0.0 : (uk1 - signedFric);
+            const accStep = resForce / p.effective_mass;
+            z = z + dt * v + dz;
+            v = v + dt * accStep + dv;
+          }
+        }
+        truth[k] = [z, v];
+        if (plant === 'linear') {
+          accTruth[k] = (u[k] - p.b_viscous * v) / p.effective_mass;
+        } else {
+          const posTerm = p.friction_coulomb + p.friction_position * Math.pow(z - p.z_reference, 2);
+          const signedFric = u[k] !== 0 ? (Math.sign(u[k]) * posTerm + p.b_viscous * v) : 0.0;
+          const resForce = Math.abs(u[k]) < Math.abs(signedFric) ? 0.0 : (u[k] - signedFric);
+          accTruth[k] = resForce / p.effective_mass;
+        }
+        y[k] = [z + sdZ * randn(rng), accTruth[k] + sdA * randn(rng)];
+      }
+      return { t, u, truth, accTruth, y, R: [[sdZ * sdZ, 0], [0, sdA * sdA]], Q };
+    }
+
+    async function loadBundledRealCSVs() {
+      if (cachedRealMotion && cachedRealStationary) return { motion: cachedRealMotion, stationary: cachedRealStationary };
+      const parseCSV = (txt) => {
+        const lines = txt.trim().split(/\r?\n/);
+        const headers = lines[0].split(',');
+        const idx = {};
+        headers.forEach((h, i) => idx[h.trim()] = i);
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(',');
+          if (cols.length < headers.length) continue;
+          rows.push({
+            time_s: parseFloat(cols[idx.time_s]),
+            fPos1: parseFloat(cols[idx.fPos1]),
+            fPos2: parseFloat(cols[idx.fPos2]),
+            fTorque1: parseFloat(cols[idx.fTorque1]),
+            fTorque2: parseFloat(cols[idx.fTorque2]),
+            fAccZUnfiltered: parseFloat(cols[idx.fAccZUnfiltered]),
+            fAccZ: parseFloat(cols[idx.fAccZ])
+          });
+        }
+        return rows;
+      };
+      const [mRes, sRes] = await Promise.all([
+        fetch('examples/akus_movement_REAL.csv'),
+        fetch('examples/akus_stationary_REAL.csv')
+      ]);
+      if (!mRes.ok || !sRes.ok) throw new Error('Could not fetch bundled examples/*.csv from repository');
+      cachedRealMotion = parseCSV(await mRes.text());
+      cachedRealStationary = parseCSV(await sRes.text());
+      return { motion: cachedRealMotion, stationary: cachedRealStationary };
+    }
+
+    function decimateRows(rows, targetDt) {
+      const dtRaw = rows[1].time_s - rows[0].time_s;
+      const ratio = Math.max(1, Math.round(targetDt / dtRaw));
+      if (ratio === 1) return { rows, dt: dtRaw };
+      const out = [];
+      for (let i = 0; i + ratio <= rows.length; i += ratio) {
+        let fPos1 = 0, fPos2 = 0, fTorque1 = 0, fTorque2 = 0, fAccZUnfiltered = 0, fAccZ = 0;
+        for (let j = 0; j < ratio; j++) {
+          const r = rows[i + j];
+          fPos1 += r.fPos1; fPos2 += r.fPos2;
+          fTorque1 += r.fTorque1; fTorque2 += r.fTorque2;
+          fAccZUnfiltered += r.fAccZUnfiltered; fAccZ += r.fAccZ;
+        }
+        out.push({
+          time_s: (out.length) * dtRaw * ratio,
+          fPos1: fPos1 / ratio, fPos2: fPos2 / ratio,
+          fTorque1: fTorque1 / ratio, fTorque2: fTorque2 / ratio,
+          fAccZUnfiltered: fAccZUnfiltered / ratio, fAccZ: fAccZ / ratio
+        });
+      }
+      return { rows: out, dt: dtRaw * ratio };
+    }
+
+    function drawMultiTracePlot(canvasId, title, tArr, traces) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+      ctx.fillStyle = '#101b2a';
+      ctx.fillRect(0, 0, W, H);
+      if (!tArr || tArr.length < 2) return;
+
+      const padL = 70, padR = 24, padT = 34, padB = 30;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      let vMin = Infinity, vMax = -Infinity;
+      traces.forEach(tr => tr.values.forEach(v => {
+        if (Number.isFinite(v)) { if (v < vMin) vMin = v; if (v > vMax) vMax = v; }
+      }));
+      if (!Number.isFinite(vMin) || Math.abs(vMax - vMin) < 1e-9) { vMin -= 1; vMax += 1; }
+      const margin = 0.08 * (vMax - vMin);
+      vMin -= margin; vMax += margin;
+
+      ctx.strokeStyle = '#213146';
+      ctx.strokeRect(padL, padT, plotW, plotH);
+      for (let g = 1; g < 4; g++) {
+        const gy = padT + (g / 4) * plotH;
+        ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(padL + plotW, gy); ctx.stroke();
+      }
+
+      ctx.fillStyle = '#ecf4ff';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(title, padL, 20);
+
+      let lx = padL + 280;
+      traces.forEach(tr => {
+        ctx.fillStyle = tr.color;
+        ctx.fillRect(lx, 11, 12, 8);
+        ctx.fillStyle = '#bfd1e8';
+        ctx.font = '11px sans-serif';
+        ctx.fillText(tr.label, lx + 16, 19);
+        lx += ctx.measureText(tr.label).width + 34;
+      });
+
+      ctx.fillStyle = '#9eb2c9';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(vMax.toFixed(3), padL - 6, padT + 10);
+      ctx.fillText((0.5 * (vMin + vMax)).toFixed(3), padL - 6, padT + plotH / 2);
+      ctx.fillText(vMin.toFixed(3), padL - 6, padT + plotH - 2);
+
+      const tMin = tArr[0], tMax = Math.max(tMin + 1e-6, tArr[tArr.length - 1]);
+      traces.forEach(tr => {
+        ctx.beginPath();
+        ctx.strokeStyle = tr.color;
+        ctx.lineWidth = tr.width || 1.6;
+        tArr.forEach((tk, i) => {
+          const x = padL + ((tk - tMin) / (tMax - tMin)) * plotW;
+          const y = padT + plotH - ((tr.values[i] - vMin) / (vMax - vMin)) * plotH;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      });
+    }
+
+    function toggleKf8Source() {
+      const src = document.getElementById('kf8Source').value;
+      document.getElementById('kf8SimParams').classList.toggle('hidden', src !== 'sim');
+      document.getElementById('kf8RealParams').classList.toggle('hidden', src !== 'real');
+    }
+
+    async function runKalmanResearchTab8() {
+      try {
+        const src = document.getElementById('kf8Source').value;
+        const fitQ = document.getElementById('kf8FitQ').checked;
+        const manualQ = parseFloat(document.getElementById('kf8ManualQ').value) || 1e-4;
+        const p = getModelParams();
+        let t, y, u, dt, R, truthPosMm = null;
+
+        if (src === 'sim') {
+          if (sim.history.length < 50) throw new Error('Run homing or a motion first so at least 50 carrier samples exist.');
+          const rng = mulberry32(42);
+          const encSdM = (parseFloat(document.getElementById('kf8EncSd').value) || 0.2) / 1000.0;
+          const accSd = parseFloat(document.getElementById('kf8AccSd').value) || 0.015;
+          dt = Math.max(0.005, sim.history[1].time_s - sim.history[0].time_s);
+          t = sim.history.map(r => r.time_s);
+          truthPosMm = sim.history.map(r => r.pos_mm);
+          y = sim.history.map(r => [
+            (r.pos_mm / 1000.0) + encSdM * randn(rng),
+            (r.acc_g - (sim.in_elevator ? 0.0 : 1.0)) * GRAVITY + accSd * randn(rng)
+          ]);
+          u = sim.history.map(r => (2 * Math.PI * (2 * r.torque1_nm) / p.pitch) - p.m_platform * p.gravity);
+          R = [[encSdM * encSdM, 0], [0, accSd * accSd]];
+        } else {
+          const { motion, stationary } = await loadBundledRealCSVs();
+          const dtTarget = (parseFloat(document.getElementById('kf8DtMs').value) || 20) / 1000.0;
+          const signZ = parseFloat(document.getElementById('kf8SignZ').value) || -1;
+          const signTau = parseFloat(document.getElementById('kf8SignTau').value) || 1;
+          const decM = decimateRows(motion, dtTarget);
+          const decS = decimateRows(stationary, dtTarget);
+          dt = decM.dt;
+          const g0 = decS.rows.reduce((s, r) => s + r.fAccZUnfiltered, 0) / decS.rows.length;
+          const av0 = 0.5 * (decM.rows[0].fPos1 + decM.rows[0].fPos2);
+          t = decM.rows.map(r => r.time_s);
+          y = decM.rows.map(r => [
+            signZ * (0.5 * (r.fPos1 + r.fPos2) - av0) * p.pitch / 360.0,
+            (r.fAccZUnfiltered - g0) * GRAVITY
+          ]);
+          u = decM.rows.map(r => signTau * (2 * Math.PI * (r.fTorque1 + r.fTorque2) / p.pitch) - p.m_platform * p.gravity);
+          const zCal = decS.rows.map(r => signZ * 0.5 * (r.fPos1 + r.fPos2) * p.pitch / 360.0);
+          const aCal = decS.rows.map(r => (r.fAccZUnfiltered - g0) * GRAVITY);
+          const zMean = zCal.reduce((a, b) => a + b, 0) / zCal.length;
+          const zVar = Math.max(1e-12, zCal.reduce((s, v) => s + (v - zMean) ** 2, 0) / (zCal.length - 1));
+          const aVar = Math.max(1e-12, aCal.reduce((s, v) => s + v * v, 0) / (aCal.length - 1));
+          R = [[zVar, 0], [0, aVar]];
+        }
+
+        const cut = Math.floor(y.length * 0.6);
+        const qa = fitQ ? fitQ2State(y.slice(0, cut), u.slice(0, cut), dt, p, R) : manualQ;
+        const res = runFilter2State(y, u, dt, p, R, qa);
+        const holdNis = res.nis.slice(cut);
+        const meanNis = holdNis.reduce((a, b) => a + b, 0) / holdNis.length;
+
+        document.getElementById('kf8Metrics').innerHTML = [
+          ['Identified qₐ [m²/s³]', qa.toExponential(3)],
+          ['R position [m²]', R[0][0].toExponential(3)],
+          ['R accel [(m/s²)²]', R[1][1].toExponential(3)],
+          ['Held-out mean NIS', meanNis.toFixed(3)]
+        ].map(([k, v]) => `<div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5"><div class="text-xs text-[var(--muted-foreground)]">${k}</div><div class="text-sm font-bold text-sky-400 mt-0.5">${v}</div></div>`).join('');
+
+        const traces = [
+          { label: 'Encoder [mm]', color: '#ffbb66', values: y.map(r => r[0] * 1000), width: 1.2 },
+          { label: 'Kalman Est [mm]', color: '#5ac8fa', values: res.estimates.map(r => r[0] * 1000), width: 2.0 }
+        ];
+        if (truthPosMm) traces.unshift({ label: 'Ground Truth [mm]', color: '#7ce3ab', values: truthPosMm, width: 1.5 });
+        drawMultiTracePlot('kf8Canvas', 'Carrier Position — Encoder vs. 2-State Kalman Estimate [mm]', t, traces);
+
+        const lastK = res.gains[res.gains.length - 1];
+        const lastS = res.S[res.S.length - 1];
+        document.getElementById('kf8Matrices').innerHTML = [
+          ['R (Stationary)', R],
+          ['Q (Van-Loan)', res.Q],
+          ['Last S', lastS],
+          ['Last K', lastK]
+        ].map(([name, m]) => `<div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5"><div class="font-bold text-sky-400 mb-1">${name}</div><div>[${m[0][0].toExponential(2)}, ${m[0][1].toExponential(2)}]</div><div>[${m[1][0].toExponential(2)}, ${m[1][1].toExponential(2)}]</div></div>`).join('');
+        setBanner('Completed 2-state Kalman Q/R/S/K analysis.', false);
+      } catch (err) {
+        setBanner(`⚠ Kalman Lab: ${err.message}`, true);
+      }
+    }
+
+    function runBenchmarkTab9() {
+      try {
+        const plant = document.getElementById('bm9Plant').value;
+        const dt = (parseFloat(document.getElementById('bm9DtMs').value) || 20) / 1000.0;
+        const N = parseInt(document.getElementById('bm9Samples').value, 10) || 850;
+        const trueQ = parseFloat(document.getElementById('bm9TrueQ').value) || 1e-4;
+        const sdZ = (parseFloat(document.getElementById('bm9SdZ').value) || 0.35) / 1000.0;
+        const sdA = parseFloat(document.getElementById('bm9SdA').value) || 0.04;
+        const fitQ = document.getElementById('bm9FitQ').checked;
+        const p = getModelParams();
+
+        const train = generateJanSynthetic(dt, N, p, plant, 42, 'training', sdZ, sdA, trueQ);
+        const hold = generateJanSynthetic(dt, N, p, plant, 42 + 7919, 'validation', sdZ, sdA, trueQ);
+        const qEst = fitQ ? fitQ2State(train.y, train.u, dt, p, train.R) : trueQ;
+        const valRes = runFilter2State(hold.y, hold.u, dt, p, train.R, qEst);
+
+        const burn = 25;
+        let sqErrRaw = 0, sqErrKf = 0, nisSum = 0, count = 0;
+        for (let k = burn; k < N; k++) {
+          sqErrRaw += Math.pow((hold.y[k][0] - hold.truth[k][0]) * 1000, 2);
+          sqErrKf += Math.pow((valRes.estimates[k][0] - hold.truth[k][0]) * 1000, 2);
+          nisSum += valRes.nis[k];
+          count++;
+        }
+        const rawRmse = Math.sqrt(sqErrRaw / count);
+        const kfRmse = Math.sqrt(sqErrKf / count);
+        const meanNis = nisSum / count;
+
+        document.getElementById('bm9Metrics').innerHTML = [
+          ['Injected / Est qₐ', `${trueQ.toExponential(2)} / ${qEst.toExponential(2)}`],
+          ['Held-out Mean NIS', meanNis.toFixed(3)],
+          ['Raw Encoder RMSE', `${rawRmse.toFixed(3)} mm`],
+          ['Kalman Pos RMSE', `${kfRmse.toFixed(3)} mm`]
+        ].map(([k, v]) => `<div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5"><div class="text-xs text-[var(--muted-foreground)]">${k}</div><div class="text-sm font-bold text-sky-400 mt-0.5">${v}</div></div>`).join('');
+
+        drawMultiTracePlot('bm9Canvas', `Held-Out Validation Position (${plant}) [mm]`, hold.t, [
+          { label: 'Noisy Encoder', color: '#ffbb66', values: hold.y.map(r => r[0] * 1000), width: 1.0 },
+          { label: 'Known Truth', color: '#7ce3ab', values: hold.truth.map(r => r[0] * 1000), width: 1.8 },
+          { label: 'Kalman Estimate', color: '#5ac8fa', values: valRes.estimates.map(r => r[0] * 1000), width: 1.8 }
+        ]);
+        setBanner(`Completed controlled benchmark (${plant}): Kalman RMSE = ${kfRmse.toFixed(3)} mm`, false);
+      } catch (err) {
+        setBanner(`⚠ Benchmark: ${err.message}`, true);
+      }
+    }
+
+    async function runAccelerationKfTab10() {
+      try {
+        const src = document.getElementById('acc10Source').value;
+        const dtTarget = (parseFloat(document.getElementById('acc10DtMs').value) || 10) / 1000.0;
+        const priorMode = document.getElementById('acc10Prior').value;
+        const sdAcc = parseFloat(document.getElementById('acc10Sd').value) || 0.04;
+        const N = parseInt(document.getElementById('acc10Samples').value, 10) || 950;
+        const fitQ = document.getElementById('acc10FitQ').checked;
+        const p = getModelParams();
+
+        let tHold, aTrain, aHold, rAcc, priorTrain = null, priorHold = null, truthAcc = null, tcFiltered = null, actualDt = dtTarget, note = '';
+
+        if (src.startsWith('syn_')) {
+          const plant = src === 'syn_linear' ? 'linear' : 'jan_euler';
+          const train = generateJanSynthetic(dtTarget, N, p, plant, 42, 'training', 0.00035, sdAcc, 0.00004);
+          const hold = generateJanSynthetic(dtTarget, N, p, plant, 42 + 7919, 'validation', 0.00035, sdAcc, 0.00004);
+          rAcc = sdAcc * sdAcc;
+          aTrain = train.y.map(r => r[1]);
+          aHold = hold.y.map(r => r[1]);
+          tHold = hold.t;
+          truthAcc = hold.accTruth;
+          if (priorMode === 'jan') {
+            priorTrain = train.u.map(uk => uk / p.effective_mass);
+            priorHold = hold.u.map(uk => uk / p.effective_mass);
+          }
+          note = `Synthetic (${plant}) · Independent training/validation seeds`;
+        } else {
+          document.getElementById('acc10StatusNote').textContent = 'Loading real Earth-hardware CSVs from repository...';
+          const { motion, stationary } = await loadBundledRealCSVs();
+          const decM = decimateRows(motion, dtTarget);
+          const decS = decimateRows(stationary, dtTarget);
+          actualDt = decM.dt;
+          const g0 = decS.rows.reduce((s, r) => s + r.fAccZUnfiltered, 0) / decS.rows.length;
+          const calAcc = decS.rows.map(r => (r.fAccZUnfiltered - g0) * GRAVITY);
+          rAcc = Math.max(1e-12, calAcc.reduce((s, v) => s + v * v, 0) / (calAcc.length - 1));
+          aHold = decM.rows.map(r => (r.fAccZUnfiltered - g0) * GRAVITY);
+          tHold = decM.rows.map(r => r.time_s);
+          const tcBase = decS.rows.reduce((s, r) => s + r.fAccZ, 0) / decS.rows.length;
+          tcFiltered = decM.rows.map(r => r.fAccZ - tcBase);
+          const cut = Math.floor(aHold.length * 0.55);
+          aTrain = aHold.slice(0, cut);
+          note = 'Real Earth hardware (Nov 5, 2026) · Stationary +1g subtracted';
+        }
+
+        const qAcc = fitQ ? fitAccelerationQ(aTrain, actualDt, rAcc, priorTrain) : 1e-4;
+        const res = runAccelerationFilter(aHold, actualDt, rAcc, qAcc, priorHold);
+        const lastK = res.K[res.K.length - 1];
+
+        let rmseTxt = '';
+        if (truthAcc) {
+          let sqRaw = 0, sqKf = 0;
+          for (let i = 0; i < aHold.length; i++) {
+            sqRaw += Math.pow(aHold[i] - truthAcc[i], 2);
+            sqKf += Math.pow(res.estimated[i] - truthAcc[i], 2);
+          }
+          rmseTxt = ` · RMSE: Raw ${Math.sqrt(sqRaw / aHold.length).toFixed(4)} → KF ${Math.sqrt(sqKf / aHold.length).toFixed(4)} m/s²`;
+        }
+        document.getElementById('acc10StatusNote').textContent = note + rmseTxt;
+
+        document.getElementById('acc10Metrics').innerHTML = [
+          ['Acceleration R [(m/s²)²]', rAcc.toExponential(4)],
+          ['Identified q [(m/s²)²/s]', qAcc.toExponential(4)],
+          ['Q per sample [(m/s²)²]', res.Q_step.toExponential(4)],
+          ['Last Kalman gain K', lastK.toFixed(4)]
+        ].map(([k, v]) => `<div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5"><div class="text-xs text-[var(--muted-foreground)]">${k}</div><div class="text-sm font-bold text-sky-400 mt-0.5">${v}</div></div>`).join('');
+
+        const traces = [
+          { label: 'Raw Accelerometer [m/s²]', color: '#ffbb66', values: aHold, width: 1.0 },
+          { label: 'Kalman Acceleration [m/s²]', color: '#5ac8fa', values: res.estimated, width: 2.0 }
+        ];
+        if (truthAcc) traces.push({ label: 'Synthetic Ground Truth', color: '#7ce3ab', values: truthAcc, width: 1.6 });
+        if (tcFiltered) traces.push({ label: 'TwinCAT 10 Hz Low-Pass', color: '#db9bff', values: tcFiltered, width: 1.4 });
+        drawMultiTracePlot('acc10Canvas', 'Dynamic Acceleration: Raw Sensor vs. 1-State Kalman Filter [m/s²]', tHold, traces);
+
+        lastAccKfReport = { t: tHold, measured: aHold, kalman: res.estimated, K: res.K, S: res.S, nis: res.nis, R: rAcc, q: qAcc, Q_step: res.Q_step, note };
+        setBanner('Completed v4 1-state Acceleration Kalman Filter estimation.', false);
+      } catch (err) {
+        setBanner(`⚠ Acceleration KF: ${err.message}`, true);
+      }
+    }
+
+    function exportAccKfCSV() {
+      if (!lastAccKfReport) { setBanner('⚠ Run Acceleration KF first before exporting.', true); return; }
+      const r = lastAccKfReport;
+      const lines = ['time_s,acc_measured_ms2,acc_kalman_ms2,K,S,NIS'];
+      for (let i = 0; i < r.t.length; i++) {
+        lines.push(`${r.t[i].toFixed(4)},${r.measured[i]},${r.kalman[i]},${r.K[i]},${r.S[i]},${r.nis[i]}`);
+      }
+      downloadFile('AKUS_Acceleration_Filter.csv', lines.join('\n'), 'text/csv');
+    }
+
+    function exportAccKfJSON() {
+      if (!lastAccKfReport) { setBanner('⚠ Run Acceleration KF first before exporting.', true); return; }
+      const r = lastAccKfReport;
+      downloadFile('AKUS_Acceleration_Identification.json', JSON.stringify({
+        R_acc: r.R, q_acc: r.q, Q_acc_per_sample: r.Q_step,
+        K_last: r.K[r.K.length - 1], S_last: r.S[r.S.length - 1], note: r.note
+      }, null, 2), 'application/json');
     }
 
     function refreshUI() {
