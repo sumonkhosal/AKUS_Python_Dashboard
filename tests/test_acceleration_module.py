@@ -17,6 +17,10 @@ from akuskf.acceleration import (
     acceleration_diagnostics,
     run_acceleration_benchmark,
 )
+from akuskf.twincat_export import (
+    generate_twincat_st_code,
+    verify_python_to_twincat_equivalence,
+)
 from akuskf.synthetic import generate
 from akuskf.jan_model import ModelParameters
 from kalman_lab import _decimate, load_twincat_csv
@@ -266,5 +270,22 @@ def test_three_way_benchmark_on_nonlinear_plant_proves_nonlinear_prior_superiori
     assert abs(nl["mean_nees"] - 1.0) < abs(lin["mean_nees"] - 1.0)
     assert 0.93 <= nl["coverage_95pct"] <= 0.985
     assert nl["lag1_white"] and nl["ljung_box_pvalue"] > 0.05
+
+
+@pytest.mark.parametrize("prior_mode", [0, 1, 2])
+def test_python_to_twincat_st_cycle_by_cycle_equivalence(prior_mode):
+    p = ModelParameters()
+    s = generate(dt=0.01, N=400, p=p, plant="jan_euler", seed=7961, scenario="validation", true_q=1e-4)
+    st_text = generate_twincat_st_code(default_prior_mode=prior_mode)
+    assert "FUNCTION_BLOCK FB_AkusNonlinearAccKF" in st_text
+    assert "fQstep_ms4      := fProcessQ * fSampleDt;" in st_text
+    eq = verify_python_to_twincat_equivalence(
+        s["u"], s["y"][:, 1], dt=0.01, r=1.5884e-3, q=5.1957e-5, prior_mode=prior_mode, p=p
+    )
+    assert eq["is_bit_exact_lreal"]
+    assert eq["max_abs_diff_acc_est_ms2"] < 1e-14
+    assert eq["max_abs_diff_K"] < 1e-15
+    assert eq["max_abs_diff_S_ms4"] < 1e-15
+
 
 

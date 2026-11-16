@@ -560,9 +560,10 @@
               <h3 class="text-sm font-bold">Acceleration KF (v4) · Simulated Truth, Q/R Identification Benchmark &amp; Real Earth-Hardware Replay</h3>
               <p class="text-xs text-[var(--muted-foreground)]">1-state acceleration-residual Kalman filter (dim=1, nominal NIS/NEES ≈ 1.0): Q_step = q × dt, R from stationary/residual noise, S and K updated every sample.</p>
             </div>
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-2">
               <button onclick="exportAccKfCSV()" class="bg-sky-600 hover:bg-sky-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold">Download Accel CSV</button>
               <button onclick="exportAccKfJSON()" class="bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs font-semibold">Download Report JSON</button>
+              <button onclick="exportTwinCATFB()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold">Download TwinCAT FB (.st)</button>
             </div>
           </div>
 
@@ -2056,6 +2057,90 @@
         R_acc: r.R, q_acc: r.q, Q_acc_per_sample: r.Q_step,
         K_last: r.K[r.K.length - 1], S_last: r.S[r.S.length - 1], note: r.note
       }, null, 2), 'application/json');
+    }
+
+    function exportTwinCATFB() {
+      const r = lastAccKfReport || { R: 1.5884078e-3, q: 5.1957094e-5, t: [0, 0.01] };
+      const dt = r.t.length > 1 ? (r.t[1] - r.t[0]) : 0.01;
+      const p = getModelParams();
+      const st = [
+        '// ============================================================================',
+        '// Function Block: FB_AkusNonlinearAccKF (TwinCAT 3 Structured Text, LREAL)',
+        '// Dynamic per-cycle S_k and K_k covariance recursion + Jan Nonlinear Euler Prior',
+        '// ============================================================================',
+        'FUNCTION_BLOCK FB_AkusNonlinearAccKF',
+        'VAR_INPUT',
+        '    bEnable         : BOOL  := TRUE;',
+        '    bReset          : BOOL  := FALSE;',
+        '    nPriorMode      : INT   := 2; // 0=RW, 1=Linear, 2=Nonlinear Euler',
+        `    fSampleDt       : LREAL := ${dt.toFixed(6)};`,
+        `    fProcessQ       : LREAL := ${r.q.toExponential(8)};`,
+        `    fMeasR          : LREAL := ${r.R.toExponential(8)};`,
+        '    fNetForce_N     : LREAL := 0.0;',
+        '    fAccMeas_ms2    : LREAL := 0.0;',
+        `    fMassPlatform   : LREAL := ${p.m_platform};`,
+        `    fMassEquivalent : LREAL := ${p.m_equivalent};`,
+        `    fViscousB       : LREAL := ${p.b_viscous};`,
+        `    fCoulombFc      : LREAL := ${p.friction_coulomb};`,
+        `    fPosFrictionBz  : LREAL := ${p.friction_position};`,
+        `    fZReference     : LREAL := ${p.z_reference};`,
+        'END_VAR',
+        'VAR_OUTPUT',
+        '    bValid          : BOOL  := FALSE;',
+        '    fAccPrior_ms2   : LREAL := 0.0;',
+        '    fAccEst_ms2     : LREAL := 0.0;',
+        '    fResidualD_ms2  : LREAL := 0.0;',
+        '    fP_ms4          : LREAL := 0.0;',
+        '    fQstep_ms4      : LREAL := 0.0;',
+        '    fS_ms4          : LREAL := 0.0;',
+        '    fK              : LREAL := 0.0;',
+        '    fInnovation_ms2 : LREAL := 0.0;',
+        '    fNIS            : LREAL := 0.0;',
+        'END_VAR',
+        'VAR',
+        '    bInitialized    : BOOL  := FALSE;',
+        '    fZHat           : LREAL := 0.0;',
+        '    fVHat           : LREAL := 0.0;',
+        '    fMTotal         : LREAL := 0.0;',
+        '    fPosTerm        : LREAL := 0.0;',
+        '    fSignedFriction : LREAL := 0.0;',
+        '    fResultingForce : LREAL := 0.0;',
+        '    fPpred          : LREAL := 0.0;',
+        '    fOneMinusK      : LREAL := 0.0;',
+        'END_VAR',
+        '',
+        'IF NOT bEnable THEN bValid := FALSE; RETURN; END_IF;',
+        'fMTotal := fMassPlatform + fMassEquivalent;',
+        'IF bReset OR (NOT bInitialized) THEN',
+        '    fZHat := fZReference; fVHat := 0.0; fResidualD_ms2 := 0.0;',
+        '    fP_ms4 := MAX(fMeasR, 1.0E-12); bInitialized := TRUE;',
+        'END_IF;',
+        'IF nPriorMode = 2 THEN',
+        '    fPosTerm := fCoulombFc + fPosFrictionBz * (fZHat - fZReference) * (fZHat - fZReference);',
+        '    IF fNetForce_N > 0.0 THEN fSignedFriction := fPosTerm + fViscousB * fVHat;',
+        '    ELSIF fNetForce_N < 0.0 THEN fSignedFriction := -fPosTerm + fViscousB * fVHat;',
+        '    ELSE fSignedFriction := 0.0; END_IF;',
+        '    IF ABS(fNetForce_N) < ABS(fSignedFriction) THEN fResultingForce := 0.0;',
+        '    ELSE fResultingForce := fNetForce_N - fSignedFriction; END_IF;',
+        '    fAccPrior_ms2 := fResultingForce / fMTotal;',
+        '    fZHat := fZHat + fSampleDt * fVHat;',
+        '    fVHat := fVHat + fSampleDt * fAccPrior_ms2;',
+        'ELSE',
+        '    fAccPrior_ms2 := 0.0;',
+        'END_IF;',
+        'fQstep_ms4      := fProcessQ * fSampleDt;',
+        'fPpred          := fP_ms4 + fQstep_ms4;',
+        'fS_ms4          := fPpred + fMeasR;',
+        'fK              := fPpred / fS_ms4;',
+        'fInnovation_ms2 := (fAccMeas_ms2 - fAccPrior_ms2) - fResidualD_ms2;',
+        'fResidualD_ms2  := fResidualD_ms2 + fK * fInnovation_ms2;',
+        'fOneMinusK      := 1.0 - fK;',
+        'fP_ms4          := (fOneMinusK * fOneMinusK) * fPpred + (fK * fK) * fMeasR;',
+        'fAccEst_ms2     := fAccPrior_ms2 + fResidualD_ms2;',
+        'fNIS            := (fInnovation_ms2 * fInnovation_ms2) / fS_ms4;',
+        'bValid          := TRUE;'
+      ].join('\n');
+      downloadFile('FB_AkusNonlinearAccKF.st', st, 'text/plain');
     }
 
     function refreshUI() {

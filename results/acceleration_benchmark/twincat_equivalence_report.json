@@ -1,0 +1,15 @@
+{
+  "prior_mode": 2,
+  "n_samples": 950,
+  "dt_s": 0.01,
+  "q": 5.195709406102767e-05,
+  "r": 0.0015884077764552465,
+  "max_abs_diff_prior_ms2": 0.0,
+  "max_abs_diff_acc_est_ms2": 1.3877787807814457e-17,
+  "max_abs_diff_K": 5.898059818321144e-17,
+  "max_abs_diff_S_ms4": 4.336808689942018e-19,
+  "max_abs_diff_P_ms4": 1.0842021724855044e-19,
+  "max_abs_diff_innovation_ms2": 1.3877787807814457e-17,
+  "max_abs_diff_nis": 2.6645352591003757e-15,
+  "is_bit_exact_lreal": true
+}

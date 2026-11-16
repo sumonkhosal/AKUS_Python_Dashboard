@@ -30,6 +30,7 @@ from akuskf.acceleration import (
     jan_nonlinear_acceleration_prior, acceleration_diagnostics,
     run_acceleration_benchmark,
 )
+from akuskf.twincat_export import generate_twincat_st_code, verify_python_to_twincat_equivalence
 from akuskf.synthetic import generate as generate_jan_synthetic
 from kalman_lab import _decimate
 from akus_sim import (
@@ -1433,7 +1434,17 @@ with tabs[10]:
         with st.expander('Detailed Validation Metrics & Backend Equivalence JSON', expanded=False):
             st.json({k: (float(v) if isinstance(v, (int, float, np.floating)) else v) for k, v in met.items()})
 
-        da, db = st.columns(2)
+        st_code = generate_twincat_st_code(
+            q_identified=float(ar['q']),
+            r_identified=float(ar['R']),
+            dt_s=float(ac['time_s'].iloc[1] - ac['time_s'].iloc[0]) if len(ac) > 1 else 0.01,
+            default_prior_mode=(2 if met.get('prior_mode') == 'nonlinear' else (1 if met.get('prior_mode') == 'linear' else 0)),
+        )
+        with st.expander('TwinCAT 3 Structured Text Function Block (FB_AkusNonlinearAccKF.st) — Dynamic S_k / K_k Recursion', expanded=False):
+            st.caption('Reproduces Q_step = q*dt, S_k = P_k^- + R, K_k = P_k^- / S_k, Joseph P update, and Jan’s nonlinear Euler acceleration prediction cycle-by-cycle in IEC 61131-3 LREAL.')
+            st.code(st_code, language='pascal')
+
+        da, db, dc = st.columns(3)
         with da:
             st.download_button(
                 'Download acceleration output CSV',
@@ -1462,6 +1473,14 @@ with tabs[10]:
                 json.dumps(report, indent=2),
                 file_name='AKUS_Acceleration_Identification.json',
                 mime='application/json',
+                use_container_width=True,
+            )
+        with dc:
+            st.download_button(
+                'Download TwinCAT FB (.st)',
+                st_code.encode('utf-8'),
+                file_name='FB_AkusNonlinearAccKF.st',
+                mime='text/plain',
                 use_container_width=True,
             )
     else:
