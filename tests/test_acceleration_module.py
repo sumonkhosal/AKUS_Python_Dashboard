@@ -11,7 +11,9 @@ from akuskf.acceleration import (
     fit_acceleration_q,
     estimate_acceleration_r,
     analyze_acceleration_noise,
+    evaluate_prior_accuracy,
     jan_linear_acceleration_prior,
+    jan_nonlinear_acceleration_prior,
     acceleration_diagnostics,
     run_acceleration_benchmark,
 )
@@ -103,10 +105,11 @@ def test_nonlinear_euler_mismatch_detected_in_acceleration_benchmark():
         sensor_std_a=0.03,
         seed=42,
         use_prior=True,
+        prior_mode="linear",
     )
-    # Linear force prior omits nonlinear Coulomb/position friction, so fitted q inflates
-    assert out["metrics"]["q_estimated"] > out["metrics"]["q_injected"] * 1.5
-    assert any("Nonlinear Friction Mismatch" in s for s in out["interpretation"])
+    # Linear force prior omits nonlinear Coulomb/position friction, so fitted q_lin inflates
+    assert out["ablation"]["linear_prior_kf"]["q_estimated"] > out["metrics"]["q_injected"] * 1.5
+    assert out["ablation"]["nonlinear_prior_kf"]["q_estimated"] < out["ablation"]["linear_prior_kf"]["q_estimated"] * 0.2
 
 
 def test_em_and_mle_q_identification():
@@ -183,3 +186,85 @@ def test_streamlit_app_compiles_cleanly():
     root = Path(__file__).resolve().parents[1]
     py_compile.compile(str(root / "app.py"), doraise=True)
     py_compile.compile(str(root / "desktop_app.py"), doraise=True)
+
+
+def test_priority1_open_loop_prior_vs_ground_truth():
+    p = ModelParameters()
+    s_lin = generate(dt=0.01, N=950, p=p, plant="linear", seed=7961, scenario="validation", true_q=1e-4)
+    pr_lin = jan_linear_acceleration_prior(s_lin["u"], 0.01, p)
+    ev_lin = evaluate_prior_accuracy(pr_lin, s_lin["acc_truth"])
+    assert ev_lin["prior_rmse_ms2"] < 0.01
+    assert ev_lin["prior_r2_score"] > 0.95
+
+    s_nl = generate(dt=0.01, N=950, p=p, plant="jan_euler", seed=7961, scenario="validation", true_q=1e-4)
+    pr_nl = jan_linear_acceleration_prior(s_nl["u"], 0.01, p)
+    ev_nl = evaluate_prior_accuracy(pr_nl, s_nl["acc_truth"])
+    # Nonlinear Coulomb + position friction degrades the linear prior
+    assert ev_nl["prior_rmse_ms2"] > 0.03
+
+
+def test_priority2_innovation_autocorrelation_and_nees_consistency():
+    out_lin = run_acceleration_benchmark(
+        plant="linear", dt=0.01, n_train=950, n_validation=950, q_true=1e-4, sensor_std_a=0.04, seed=42
+    )
+    m_lin = out_lin["metrics"]
+    assert abs(m_lin["innovation_lag1"]) <= m_lin["innovation_whiteness_bound_95"]
+    assert m_lin["ljung_box_pvalue"] > 0.05
+    assert 0.7 < m_lin["mean_nees"] < 1.5
+
+    out_nl_mismatched = run_acceleration_benchmark(
+        plant="jan_euler", dt=0.01, n_train=950, n_validation=950,
+        q_true=1e-4, sensor_std_a=0.04, seed=42, prior_mode="linear"
+    )
+    m_nl_lin = out_nl_mismatched["metrics"]
+    # Even when mean_nis is near 1.0 (~1.057), inflated Q makes posterior P over-conservative,
+    # so mean_nees drops outside the 95% chi2(1) interval [0.911, 1.093]
+    assert not m_nl_lin["nees_consistent_95pct"]
+
+
+def test_priority3_model_guided_kf_outperforms_random_walk_kf_without_prior():
+    out = run_acceleration_benchmark(
+        plant="linear", dt=0.01, n_train=950, n_validation=950, q_true=1e-4, sensor_std_a=0.04, seed=42
+    )
+    abl = out["ablation"]
+    rw = abl["random_walk_kf"]
+    mg = abl["model_guided_kf"]
+    # Model-guided KF should beat Random-Walk KF (prior_ms2=None) by > 45% RMSE on matched linear plant
+    assert mg["rmse_ms2"] < rw["rmse_ms2"] * 0.55
+    assert mg["q_estimated"] < rw["q_estimated"] * 0.1
+    assert out["metrics"]["model_vs_rw_rmse_improvement_pct"] > 45.0
+
+
+def test_nonlinear_force_prior_matches_jan_euler_truth_and_uses_no_measurements():
+    p = ModelParameters()
+    s_nl = generate(dt=0.01, N=950, p=p, plant="jan_euler", seed=7961, scenario="validation", true_q=1e-4)
+    pr_lin = jan_linear_acceleration_prior(s_nl["u"], 0.01, p)
+    pr_nl = jan_nonlinear_acceleration_prior(s_nl["u"], 0.01, p)
+    ev_lin = evaluate_prior_accuracy(pr_lin, s_nl["acc_truth"])
+    ev_nl = evaluate_prior_accuracy(pr_nl, s_nl["acc_truth"])
+    assert ev_nl["prior_rmse_ms2"] < 0.007
+    assert ev_nl["prior_r2_score"] > 0.94
+    assert ev_nl["prior_rmse_ms2"] < ev_lin["prior_rmse_ms2"] * 0.2
+
+
+def test_three_way_benchmark_on_nonlinear_plant_proves_nonlinear_prior_superiority():
+    out = run_acceleration_benchmark(
+        plant="jan_euler", dt=0.01, n_train=950, n_validation=950,
+        q_true=1e-4, sensor_std_a=0.04, seed=42, prior_mode="nonlinear"
+    )
+    abl = out["ablation"]
+    rw = abl["random_walk_kf"]
+    lin = abl["linear_prior_kf"]
+    nl = abl["nonlinear_prior_kf"]
+
+    # 1) Nonlinear prior KF achieves > 45% lower RMSE than BOTH Ordinary RW-KF and Linear-Prior KF
+    assert nl["rmse_ms2"] < rw["rmse_ms2"] * 0.55
+    assert nl["rmse_ms2"] < lin["rmse_ms2"] * 0.58
+    # 2) Nonlinear prior eliminates the >20x Q inflation caused by linear friction mismatch
+    assert nl["q_estimated"] < lin["q_estimated"] * 0.05
+    # 3) Nonlinear prior restores NEES calibration toward 1.0 (from 0.559 up to ~0.85) and 95% coverage (~97%)
+    assert abs(nl["mean_nees"] - 1.0) < abs(lin["mean_nees"] - 1.0)
+    assert 0.93 <= nl["coverage_95pct"] <= 0.985
+    assert nl["lag1_white"] and nl["ljung_box_pvalue"] > 0.05
+
+

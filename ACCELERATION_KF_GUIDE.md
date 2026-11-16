@@ -45,21 +45,27 @@ Both `backend='filterpy'` (`filterpy.kalman.KalmanFilter(dim_x=1, dim_z=1)`) and
 
 ---
 
-## 3. Controlled Acceleration Q/R Identification Benchmark Results
+## 3. Controlled Acceleration Q/R Identification & Ablation Benchmark Results
 
-Generated reproducibly via `run_acceleration_benchmark` (`seed = 42` for training, `seed = 7961` for held-out validation, $\Delta t = 10\text{ ms}$, $N = 950$, saved in [`results/acceleration_benchmark/`](results/acceleration_benchmark/)):
+Generated reproducibly via `run_acceleration_benchmark` (`seed = 42` for training, `seed = 7961` for held-out validation, $\Delta t = 10\text{ ms}$, $N = 950$, $q_{\text{true}} = 1.00 \times 10^{-4}$, $\sigma_v = 0.04\text{ m/s}^2$, saved in [`results/acceleration_benchmark/`](results/acceleration_benchmark/)):
 
-| Metric (1-State Acceleration KF, `dim = 1`) | Matched Linear Plant | Jan Nonlinear Euler Plant |
-|---|---:|---:|
-| Injected sensor noise variance $R_{\text{true}}$ $[(\text{m/s}^2)^2]$ | `1.600e-3` ($\sigma_v = 0.04\text{ m/s}^2$) | `1.600e-3` ($\sigma_v = 0.04\text{ m/s}^2$) |
-| Estimated sensor noise variance $\hat{R}$ $[(\text{m/s}^2)^2]$ | `1.637e-3` (`+2.3%` error) | `1.637e-3` (`+2.3%` error) |
-| Injected process spectral density $q_{\text{true}}$ $[(\text{m/s}^2)^2/\text{s}]$ | `1.000e-3` | `1.000e-3` |
-| Identified process spectral density $\hat{q}$ $[(\text{m/s}^2)^2/\text{s}]$ | `7.811e-4` ($0.78\times$) | `2.243e-3` (**$2.24\times$ inflation**) |
-| Held-out Raw Acceleration RMSE $[\text{m/s}^2]$ | `0.0401` | `0.0401` |
-| Held-out Kalman Acceleration RMSE $[\text{m/s}^2]$ | **`0.0121` (`-69.7%`)** | **`0.0131` (`-67.4%`)** |
-| Held-out Raw $\rightarrow$ Kalman MAE $[\text{m/s}^2]$ | `0.0318` $\rightarrow$ **`0.0100`** | `0.0318` $\rightarrow$ **`0.0104`** |
-| Held-out 1D Mean NIS (nominal $\approx 1.0$, 95% CI `[0.911, 1.093]`) | **`0.991`** | **`0.970`** |
-| FilterPy vs. Reference max $\|\Delta \hat{a}\|$ $[\text{m/s}^2]$ | `5.55e-17` | `2.78e-17` |
+### Matched Linear Plant (`plant = 'linear'`)
+| Estimator Stage (`dim = 1`) | Fitted $\hat{q}$ $[(\text{m/s}^2)^2/\text{s}]$ | Steady Gain $K_\infty$ | Held-Out RMSE $[\text{m/s}^2]$ | Held-Out MAE $[\text{m/s}^2]$ | 1D Mean NIS ($\approx 1.0$) | 1D Mean NEES ($\approx 1.0$) | 95% Coverage | Innov Lag-1 $\rho_1$ ($\pm 0.064$) | Ljung-Box $p$ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **1. Raw Accelerometer Sensor (No Filter)** | — | `1.0000` | `0.04097` | `0.03292` | — | — | — | — | — |
+| **2. Open-Loop Jan Physics Prior Only (`a_prior`, No KF)** | `0 (deterministic)` | `0.0000` | **`0.00685`** | `0.00555` | — | — | $R^2 = 0.984$ | — | — |
+| **3. Random-Walk KF Baseline (`prior_ms2 = None`)** | `3.407e-3` | `0.1361` | `0.01340` | `0.01078` | `1.005` | `0.831` | `96.8%` | `-0.058` | `0.404` |
+| **4. Model-Guided KF (`prior_ms2 = Jan Linear Physics`)** | **`3.139e-5`** | `0.0140` | **`0.00544` (`-59.4%` vs RW-KF)** | **`0.00439`** | **`1.057`** | **`1.248`** | `91.6%` | **`-0.016`** | **`0.542`** |
+
+### Jan Nonlinear Euler Plant (`plant = 'jan_euler'`) — Three-Way Comparison
+| Estimator Option (`dim = 1`) | Fitted $\hat{q}$ $[(\text{m/s}^2)^2/\text{s}]$ | Steady Gain $K_\infty$ | Held-Out RMSE $[\text{m/s}^2]$ | Held-Out MAE $[\text{m/s}^2]$ | 1D Mean NIS ($\approx 1.0$) | 1D Mean NEES ($\approx 1.0$) | 95% Coverage | Innov Lag-1 $\rho_1$ ($\pm 0.064$) | Ljung-Box $p$ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **0. Raw Accelerometer Sensor (No Filter)** | — | `1.0000` | `0.04097` | `0.03292` | — | — | — | — | — |
+| **0a. Open-Loop Jan Linear Prior Only (`No KF`)** | `0 (deterministic)` | `0.0000` | `0.03500` | `0.03045` | — | — | $R^2 = -0.866$ | — | — |
+| **0b. Open-Loop Jan Nonlinear Prior Only (`No KF`)** | `0 (deterministic)` | `0.0000` | **`0.00573` (`-83.6%` vs Lin)** | `0.00354` | — | — | **$R^2 = +0.950$** | — | — |
+| **1. Ordinary Acceleration KF (`prior_ms2 = None`)** | `1.543e-3` | `0.0938` | `0.01059` | `0.00854` | `1.033` | `0.752` | `97.8%` | `-0.036` | `0.602` |
+| **2. Linear Physics-Guided KF (`Jan Linear Prior`)** | `2.073e-3` ($20.7\times$ inflated) | `0.1079` | `0.00979` (`-7.5%` vs RW) | `0.00781` | `1.016` | `0.559` (over-conservative) | `99.4%` | `-0.052` | `0.363` |
+| **3. Nonlinear Physics-Guided KF (`Jan Nonlinear Prior`)** | **`5.196e-5` ($39.9\times$ lower $Q$)** | **`0.0179`** | **`0.00518` (`-51.0%` vs RW, `-47.1%` vs Lin)** | **`0.00426`** | **`1.051`** | **`0.885`** | **`97.4%`** | **`-0.023`** | **`0.471`** |
 
 ### Comparison with Historical 2-State Position/Velocity Benchmark (`dim = 2`)
 Do not confuse the 1-state Acceleration KF metrics above (`expected NIS/NEES ≈ 1.0`) with the previous 2-state `[position, velocity]` benchmark (`expected NIS/NEES ≈ 2.0`):

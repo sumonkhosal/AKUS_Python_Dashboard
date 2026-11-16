@@ -591,15 +591,16 @@
               </div>
             </div>
             <div class="space-y-2">
-              <label class="block text-xs font-semibold" title="Random-walk baseline (a_prior=0) or Jan linear physics force prediction">Acceleration prediction prior</label>
+              <label class="block text-xs font-semibold" title="Select Ordinary RW-KF (prior=None), Jan Linear Prior, or Jan Nonlinear Euler Prior">Acceleration prediction prior</label>
               <select id="acc10Prior" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
-                <option value="rw">Measured acceleration only (random-walk model)</option>
-                <option value="jan">Jan linear physics force prediction (model-informed)</option>
+                <option value="jan_nl" selected>3. Jan nonlinear Euler physics prior (Coulomb + pos friction)</option>
+                <option value="jan_lin">2. Jan linear physics force prediction (linear prior)</option>
+                <option value="rw">1. Measured acceleration only (ordinary RW-KF, prior=None)</option>
               </select>
               <label class="block text-xs font-semibold" title="Injected sensor noise SD [m/s²], injected process q [(m/s²)²/s], and sample count">Noise SD [m/s²] / Injected q / Samples</label>
               <div class="grid grid-cols-3 gap-1.5">
                 <input id="acc10Sd" type="number" step="0.005" value="0.04" title="Injected sensor noise SD [m/s²]" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
-                <input id="acc10TrueQ" type="number" step="0.0005" value="0.001" title="Injected process spectral density q_true [(m/s²)²/s]" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
+                <input id="acc10TrueQ" type="number" step="0.0001" value="0.0001" title="Injected process spectral density q_true [(m/s²)²/s]" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
                 <input id="acc10Samples" type="number" step="50" min="200" max="3000" value="950" title="Samples per synthetic sequence" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
               </div>
             </div>
@@ -618,6 +619,7 @@
 
           <div id="acc10Metrics" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5"></div>
           <div id="acc10Interp" class="hidden bg-[var(--background)] border border-[var(--border)] rounded-xl p-3 text-xs space-y-1"></div>
+          <div id="acc10Ablation" class="hidden bg-[var(--background)] border border-[var(--border)] rounded-xl p-3 text-xs overflow-x-auto"></div>
           <canvas id="acc10Canvas" width="980" height="330" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
           <canvas id="acc10KsCanvas" width="980" height="220" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
         </div>
@@ -1783,6 +1785,59 @@
       }
     }
 
+    function janLinearAccelerationPrior(uArr, dt, p) {
+      const { A, B } = janMatrices(dt, p);
+      let z = p.z_reference, v = 0.0;
+      const out = new Array(uArr.length);
+      for (let k = 0; k < uArr.length; k++) {
+        out[k] = (uArr[k] - p.b_viscous * v) / p.effective_mass;
+        if (k + 1 < uArr.length) {
+          const zn = A[0][0] * z + A[0][1] * v + B[0] * uArr[k];
+          const vn = A[1][0] * z + A[1][1] * v + B[1] * uArr[k];
+          z = zn; v = vn;
+        }
+      }
+      return out;
+    }
+
+    function janNonlinearAccelerationPrior(uArr, dt, p) {
+      let z = p.z_reference, v = 0.0;
+      const out = new Array(uArr.length);
+      for (let k = 0; k < uArr.length; k++) {
+        const uk = uArr[k];
+        const posTerm = p.friction_coulomb + p.friction_position * Math.pow(z - p.z_reference, 2);
+        const signedFric = uk !== 0 ? (Math.sign(uk) * posTerm + p.b_viscous * v) : 0.0;
+        const resForce = Math.abs(uk) < Math.abs(signedFric) ? 0.0 : (uk - signedFric);
+        const ak = resForce / p.effective_mass;
+        out[k] = ak;
+        z = z + dt * v;
+        v = v + dt * ak;
+      }
+      return out;
+    }
+
+    function computeLag1AndLjungBox(arr) {
+      const n = arr.length;
+      if (n < 10) return { lag1: 0, wb95: 0.1, qLb: 0 };
+      const mean = arr.reduce((a, b) => a + b, 0) / n;
+      const centered = arr.map(x => x - mean);
+      let denom = 0;
+      for (let i = 0; i < n; i++) denom += centered[i] * centered[i];
+      if (denom <= 1e-24) return { lag1: 0, wb95: 1.96 / Math.sqrt(n), qLb: 0 };
+      const acf = [];
+      for (let lag = 1; lag <= 10; lag++) {
+        let num = 0;
+        for (let i = 0; i < n - lag; i++) num += centered[i] * centered[i + lag];
+        acf.push(num / denom);
+      }
+      let qLb = 0;
+      for (let k = 1; k <= 10; k++) {
+        qLb += (acf[k - 1] * acf[k - 1]) / (n - k);
+      }
+      qLb *= n * (n + 2);
+      return { lag1: acf[0], wb95: 1.95996 / Math.sqrt(n), qLb };
+    }
+
     async function runAccelerationKfTab10(isBenchmark = false) {
       try {
         let src = document.getElementById('acc10Source').value;
@@ -1794,44 +1849,29 @@
         const unitMode = document.getElementById('acc10Unit').value;
         const priorMode = document.getElementById('acc10Prior').value;
         const sdAcc = parseFloat(document.getElementById('acc10Sd').value) || 0.04;
-        const qTrue = parseFloat(document.getElementById('acc10TrueQ').value) || 0.001;
+        const qTrue = parseFloat(document.getElementById('acc10TrueQ').value) || 0.0001;
         const N = parseInt(document.getElementById('acc10Samples').value, 10) || 950;
         const fitQ = document.getElementById('acc10FitQ').checked;
         const p = getModelParams();
 
-        let tHold, aTrain, aHold, rAcc, rInjected = null, priorTrain = null, priorHold = null, truthAcc = null, tcFiltered = null, actualDt = dtTarget, note = '';
+        let tHold, aTrain, aHold, rAcc, rInjected = null, linPriorTrain = null, linPriorHold = null, nlPriorTrain = null, nlPriorHold = null, truthAcc = null, tcFiltered = null, actualDt = dtTarget, note = '';
 
         if (src.startsWith('syn_')) {
           const plant = src === 'syn_linear' ? 'linear' : 'jan_euler';
-          const train = generateJanSynthetic(dtTarget, N, p, plant, 42, 'training', 0.00035, sdAcc, 1e-6);
-          const hold = generateJanSynthetic(dtTarget, N, p, plant, 42 + 7919, 'validation', 0.00035, sdAcc, 1e-6);
-          const rngT = mulberry32(1042), rngV = mulberry32(9042);
-          let dT = 0, dV = 0;
-          const qStepTrue = qTrue * dtTarget;
-          const aTruthTrain = new Array(N), aTruthVal = new Array(N);
-          yTrainArr = new Array(N); aHold = new Array(N);
-          const calRes = new Array(N);
-          for (let k = 0; k < N; k++) {
-            dT += Math.sqrt(qStepTrue) * randn(rngT);
-            dV += Math.sqrt(qStepTrue) * randn(rngV);
-            aTruthTrain[k] = train.accTruth[k] + dT;
-            aTruthVal[k] = hold.accTruth[k] + dV;
-            const nT = sdAcc * randn(rngT);
-            const nV = sdAcc * randn(rngV);
-            yTrainArr[k] = aTruthTrain[k] + nT;
-            aHold[k] = aTruthVal[k] + nV;
-            calRes[k] = yTrainArr[k] - aTruthTrain[k];
-          }
+          const train = generateJanSynthetic(dtTarget, N, p, plant, 42, 'training', 0.00035, sdAcc, qTrue);
+          const hold = generateJanSynthetic(dtTarget, N, p, plant, 42 + 7919, 'validation', 0.00035, sdAcc, qTrue);
+          aTrain = train.y.map(r => r[1]);
+          aHold = hold.y.map(r => r[1]);
+          tHold = hold.t;
+          truthAcc = hold.accTruth;
+          const calRes = aTrain.map((yVal, k) => yVal - train.accTruth[k]);
           rInjected = sdAcc * sdAcc;
           const calMean = calRes.reduce((a, b) => a + b, 0) / N;
           rAcc = calRes.reduce((s, v) => s + (v - calMean) ** 2, 0) / (N - 1);
-          aTrain = yTrainArr;
-          tHold = hold.t;
-          truthAcc = aTruthVal;
-          if (priorMode === 'jan') {
-            priorTrain = train.u.map(uk => uk / p.effective_mass);
-            priorHold = hold.u.map(uk => uk / p.effective_mass);
-          }
+          linPriorTrain = janLinearAccelerationPrior(train.u, dtTarget, p);
+          linPriorHold = janLinearAccelerationPrior(hold.u, dtTarget, p);
+          nlPriorTrain = janNonlinearAccelerationPrior(train.u, dtTarget, p);
+          nlPriorHold = janNonlinearAccelerationPrior(hold.u, dtTarget, p);
           note = `Synthetic (${plant}) · Independent train (seed=42) & held-out validation (seed=7961)`;
         } else {
           document.getElementById('acc10StatusNote').textContent = 'Loading real Earth-hardware CSVs from repository...';
@@ -1846,78 +1886,154 @@
           tHold = decM.rows.map(r => r.time_s);
           const tcBase = decS.rows.reduce((s, r) => s + r.fAccZ, 0) / decS.rows.length;
           tcFiltered = decM.rows.map(r => r.fAccZ - tcBase);
+          const uReal = decM.rows.map(r => (2 * Math.PI * (r.fTorque1 + r.fTorque2) / p.pitch) - p.m_platform * p.gravity);
+          linPriorHold = janLinearAccelerationPrior(uReal, actualDt, p);
+          nlPriorHold = janNonlinearAccelerationPrior(uReal, actualDt, p);
           const cut = Math.floor(aHold.length * 0.55);
           aTrain = aHold.slice(0, cut);
+          linPriorTrain = linPriorHold.slice(0, cut);
+          nlPriorTrain = nlPriorHold.slice(0, cut);
           note = `Real Earth hardware (Nov 5, 2026) · Stationary baseline ${g0.toFixed(6)} g subtracted`;
         }
 
-        const qAcc = fitQ ? fitAccelerationQ(aTrain, actualDt, rAcc, priorTrain) : qTrue;
-        const res = runAccelerationFilter(aHold, actualDt, rAcc, qAcc, priorHold);
-        const lastK = res.K[res.K.length - 1];
-        const burn = 20;
-        const validNis = res.nis.slice(burn);
-        const meanNis = validNis.reduce((a, b) => a + b, 0) / validNis.length;
+        // Fit & run ALL THREE estimation options on identical measurements:
+        // 1) Ordinary Random-Walk KF (prior=null)
+        // 2) Linear Physics-Guided KF (linPrior)
+        // 3) Nonlinear Physics-Guided KF (nlPrior)
+        const qRw = fitQ ? fitAccelerationQ(aTrain, actualDt, rAcc, null) : qTrue;
+        const qLin = fitQ ? fitAccelerationQ(aTrain, actualDt, rAcc, linPriorTrain) : qTrue;
+        const qNl = fitQ ? fitAccelerationQ(aTrain, actualDt, rAcc, nlPriorTrain) : qTrue;
 
-        let rmseRaw = null, rmseKf = null, maeRaw = null, maeKf = null, meanNees = null;
+        const resRw = runAccelerationFilter(aHold, actualDt, rAcc, qRw, null);
+        const resLin = runAccelerationFilter(aHold, actualDt, rAcc, qLin, linPriorHold);
+        const resNl = runAccelerationFilter(aHold, actualDt, rAcc, qNl, nlPriorHold);
+
+        const res = priorMode === 'jan_nl' ? resNl : (priorMode === 'jan_lin' ? resLin : resRw);
+        const qAcc = priorMode === 'jan_nl' ? qNl : (priorMode === 'jan_lin' ? qLin : qRw);
+        const burn = 20;
+
+        const evalFilter = (kfRes) => {
+          const vNis = kfRes.nis.slice(burn);
+          const mNis = vNis.reduce((a, b) => a + b, 0) / vNis.length;
+          const { lag1, wb95, qLb } = computeLag1AndLjungBox(kfRes.innovations.slice(burn));
+          let rmse = null, mae = null, mNees = null, cov95 = null, neesArr = [];
+          if (truthAcc) {
+            let sq = 0, ab = 0, nSum = 0, in95 = 0, c = 0;
+            for (let i = 0; i < aHold.length; i++) {
+              const err = kfRes.estimated[i] - truthAcc[i];
+              const pVar = Math.max(1e-18, (1 - kfRes.K[i]) * (1 - kfRes.K[i]) * (kfRes.S[i] - rAcc) + kfRes.K[i] * kfRes.K[i] * rAcc);
+              const neesVal = (err * err) / pVar;
+              neesArr.push(neesVal);
+              if (i >= burn) {
+                sq += err * err; ab += Math.abs(err); nSum += neesVal;
+                if (Math.abs(err) <= 1.95996 * Math.sqrt(pVar)) in95++;
+                c++;
+              }
+            }
+            rmse = Math.sqrt(sq / c); mae = ab / c; mNees = nSum / c; cov95 = (in95 / c) * 100;
+          }
+          return { mNis, lag1, wb95, qLb, rmse, mae, mNees, cov95, neesArr, kSteady: kfRes.K[kfRes.K.length - 1] };
+        };
+
+        const dRw = evalFilter(resRw);
+        const dLin = evalFilter(resLin);
+        const dNl = evalFilter(resNl);
+        const dSel = priorMode === 'jan_nl' ? dNl : (priorMode === 'jan_lin' ? dLin : dRw);
+
         const interpLines = [];
+        const ablEl = document.getElementById('acc10Ablation');
+
         if (truthAcc) {
-          let sqRaw = 0, sqKf = 0, absRaw = 0, absKf = 0, neesSum = 0, cnt = 0;
+          let sqRaw = 0, absRaw = 0, sqLinPr = 0, absLinPr = 0, sqNlPr = 0, absNlPr = 0, tMean = 0, cnt = 0;
+          for (let i = burn; i < aHold.length; i++) { tMean += truthAcc[i]; cnt++; }
+          tMean /= cnt;
+          let ssTot = 0;
           for (let i = burn; i < aHold.length; i++) {
             const eRaw = aHold[i] - truthAcc[i];
-            const eKf = res.estimated[i] - truthAcc[i];
-            sqRaw += eRaw * eRaw; sqKf += eKf * eKf;
-            absRaw += Math.abs(eRaw); absKf += Math.abs(eKf);
-            const pStep = Math.max(1e-18, (1 - res.K[i]) * res.S[i] * res.K[i]);
-            neesSum += (eKf * eKf) / pStep;
-            cnt++;
+            const eLin = linPriorHold[i] - truthAcc[i];
+            const eNl = nlPriorHold[i] - truthAcc[i];
+            sqRaw += eRaw * eRaw; absRaw += Math.abs(eRaw);
+            sqLinPr += eLin * eLin; absLinPr += Math.abs(eLin);
+            sqNlPr += eNl * eNl; absNlPr += Math.abs(eNl);
+            ssTot += Math.pow(truthAcc[i] - tMean, 2);
           }
-          rmseRaw = Math.sqrt(sqRaw / cnt);
-          rmseKf = Math.sqrt(sqKf / cnt);
-          maeRaw = absRaw / cnt;
-          maeKf = absKf / cnt;
-          meanNees = neesSum / cnt;
-          const rRelErr = ((rAcc - rInjected) / rInjected) * 100;
-          const impPct = (1 - rmseKf / rmseRaw) * 100;
-          interpLines.push(`• R Recovery: Injected R = ${rInjected.toExponential(3)} vs. Estimated R = ${rAcc.toExponential(3)} [(m/s²)²] (Relative error: ${rRelErr >= 0 ? '+' : ''}${rRelErr.toFixed(1)}%).`);
-          interpLines.push(`• Q Recovery: Injected q = ${qTrue.toExponential(3)} vs. Identified q = ${qAcc.toExponential(3)} [(m/s²)²/s] (Q_step = ${res.Q_step.toExponential(3)}).`);
-          interpLines.push(`• Held-Out Accuracy: RMSE improved by ${impPct.toFixed(1)}% (Raw ${rmseRaw.toFixed(4)} → Kalman ${rmseKf.toFixed(4)} m/s²; MAE ${maeRaw.toFixed(4)} → ${maeKf.toFixed(4)} m/s²).`);
-          interpLines.push(`• 1D Consistency (df=1, expected ≈ 1.0): Mean NIS = ${meanNis.toFixed(3)}, Mean NEES = ${meanNees.toFixed(3)}.`);
+          const rmseRaw = Math.sqrt(sqRaw / cnt), maeRaw = absRaw / cnt;
+          const rmseLinPr = Math.sqrt(sqLinPr / cnt), maeLinPr = absLinPr / cnt, r2LinPr = 1.0 - sqLinPr / Math.max(ssTot, 1e-24);
+          const rmseNlPr = Math.sqrt(sqNlPr / cnt), maeNlPr = absNlPr / cnt, r2NlPr = 1.0 - sqNlPr / Math.max(ssTot, 1e-24);
+
+          interpLines.push(`• 1. Open-Loop Priors vs. Truth (No KF): Linear Prior RMSE = ${rmseLinPr.toFixed(5)} m/s² (R²=${r2LinPr.toFixed(3)}) | Complete Nonlinear Prior RMSE = ${rmseNlPr.toFixed(5)} m/s² (R²=${r2NlPr.toFixed(3)}).`);
+          interpLines.push(`• 2. Three-Way KF RMSE Comparison: (1) Ordinary RW-KF = ${dRw.rmse.toFixed(5)} m/s² (q=${qRw.toExponential(2)}) | (2) Linear-Prior KF = ${dLin.rmse.toFixed(5)} m/s² (q=${qLin.toExponential(2)}) | (3) Nonlinear-Prior KF = ${dNl.rmse.toFixed(5)} m/s² (q=${qNl.toExponential(2)}).`);
+          interpLines.push(`• 3. Consistency & Calibration: Linear-Prior KF NEES = ${dLin.mNees.toFixed(3)} (Cov=${dLin.cov95.toFixed(1)}%) vs. Nonlinear-Prior KF NEES = ${dNl.mNees.toFixed(3)} (Cov=${dNl.cov95.toFixed(1)}%, NIS=${dNl.mNis.toFixed(3)}, Lag-1 ρ₁=${dNl.lag1 >= 0 ? '+' : ''}${dNl.lag1.toFixed(3)}).`);
+
+          ablEl.classList.remove('hidden');
+          ablEl.innerHTML = `
+            <div class="font-bold text-sky-400 mb-1.5">Three-Way Benchmark: (1) Ordinary RW-KF (prior=None) vs. (2) Linear Prior KF vs. (3) Nonlinear Prior KF</div>
+            <table class="w-full text-left font-mono text-xs border-collapse">
+              <thead>
+                <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
+                  <th class="py-1 pr-2">Estimator Option</th>
+                  <th class="py-1 px-2">Fitted q</th>
+                  <th class="py-1 px-2">Gain K</th>
+                  <th class="py-1 px-2">RMSE [m/s²]</th>
+                  <th class="py-1 px-2">MAE [m/s²]</th>
+                  <th class="py-1 px-2">1D NIS</th>
+                  <th class="py-1 px-2">1D NEES</th>
+                  <th class="py-1 px-2">95% Cov</th>
+                  <th class="py-1 pl-2">Lag-1 ρ₁ (±${dSel.wb95.toFixed(3)})</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[var(--border)]">
+                <tr><td class="py-1 pr-2">0. Raw Sensor (No Filter)</td><td class="py-1 px-2">—</td><td class="py-1 px-2">1.000</td><td class="py-1 px-2">${rmseRaw.toFixed(5)}</td><td class="py-1 px-2">${maeRaw.toFixed(5)}</td><td class="py-1 px-2">—</td><td class="py-1 px-2">—</td><td class="py-1 px-2">—</td><td class="py-1 pl-2">—</td></tr>
+                <tr><td class="py-1 pr-2 text-[var(--muted-foreground)]">0a. Open-Loop Linear Prior (No KF)</td><td class="py-1 px-2">0 (det.)</td><td class="py-1 px-2">0.000</td><td class="py-1 px-2">${rmseLinPr.toFixed(5)}</td><td class="py-1 px-2">${maeLinPr.toFixed(5)}</td><td class="py-1 px-2">—</td><td class="py-1 px-2">—</td><td class="py-1 px-2">R²=${r2LinPr.toFixed(3)}</td><td class="py-1 pl-2">—</td></tr>
+                <tr><td class="py-1 pr-2 text-[var(--muted-foreground)]">0b. Open-Loop Nonlinear Prior (No KF)</td><td class="py-1 px-2">0 (det.)</td><td class="py-1 px-2">0.000</td><td class="py-1 px-2">${rmseNlPr.toFixed(5)}</td><td class="py-1 px-2">${maeNlPr.toFixed(5)}</td><td class="py-1 px-2">—</td><td class="py-1 px-2">—</td><td class="py-1 px-2">R²=${r2NlPr.toFixed(3)}</td><td class="py-1 pl-2">—</td></tr>
+                <tr><td class="py-1 pr-2 text-purple-300">1. Ordinary KF (prior_ms2 = None)</td><td class="py-1 px-2">${qRw.toExponential(2)}</td><td class="py-1 px-2">${dRw.kSteady.toFixed(3)}</td><td class="py-1 px-2 text-purple-300 font-bold">${dRw.rmse.toFixed(5)}</td><td class="py-1 px-2">${dRw.mae.toFixed(5)}</td><td class="py-1 px-2">${dRw.mNis.toFixed(3)}</td><td class="py-1 px-2">${dRw.mNees.toFixed(3)}</td><td class="py-1 px-2">${dRw.cov95.toFixed(1)}%</td><td class="py-1 pl-2">${dRw.lag1 >= 0 ? '+' : ''}${dRw.lag1.toFixed(3)}</td></tr>
+                <tr><td class="py-1 pr-2 text-rose-300 font-semibold">2. Linear Physics-Guided KF</td><td class="py-1 px-2">${qLin.toExponential(2)}</td><td class="py-1 px-2">${dLin.kSteady.toFixed(3)}</td><td class="py-1 px-2 text-rose-300 font-bold">${dLin.rmse.toFixed(5)}</td><td class="py-1 px-2">${dLin.mae.toFixed(5)}</td><td class="py-1 px-2">${dLin.mNis.toFixed(3)}</td><td class="py-1 px-2">${dLin.mNees.toFixed(3)}</td><td class="py-1 px-2">${dLin.cov95.toFixed(1)}%</td><td class="py-1 pl-2">${dLin.lag1 >= 0 ? '+' : ''}${dLin.lag1.toFixed(3)}</td></tr>
+                <tr><td class="py-1 pr-2 text-sky-400 font-bold">3. Nonlinear Physics-Guided KF</td><td class="py-1 px-2">${qNl.toExponential(2)}</td><td class="py-1 px-2">${dNl.kSteady.toFixed(3)}</td><td class="py-1 px-2 text-emerald-400 font-bold">${dNl.rmse.toFixed(5)}</td><td class="py-1 px-2">${dNl.mae.toFixed(5)}</td><td class="py-1 px-2">${dNl.mNis.toFixed(3)}</td><td class="py-1 px-2">${dNl.mNees.toFixed(3)}</td><td class="py-1 px-2">${dNl.cov95.toFixed(1)}%</td><td class="py-1 pl-2">${dNl.lag1 >= 0 ? '+' : ''}${dNl.lag1.toFixed(3)}</td></tr>
+              </tbody>
+            </table>`;
         } else {
-          interpLines.push(`• Real Earth Stationary R: ${rAcc.toExponential(4)} [(m/s²)²] (SD = ${Math.sqrt(rAcc).toFixed(5)} m/s²).`);
-          interpLines.push(`• Dynamic Segment Q: Fitted q = ${qAcc.toExponential(4)} [(m/s²)²/s], Q_step = ${res.Q_step.toExponential(4)}, 1D Mean NIS = ${meanNis.toFixed(3)}.`);
-          interpLines.push(`• Caveat: TwinCAT 10 Hz low-pass (fAccZ) is shown for comparison only and is NOT ground truth.`);
+          ablEl.classList.add('hidden');
+          interpLines.push(`• 1. Stationary Earth R: ${rAcc.toExponential(4)} [(m/s²)²] (SD = ${Math.sqrt(rAcc).toFixed(5)} m/s²).`);
+          interpLines.push(`• 2. Innovation Consistency: 1D Mean NIS = ${dSel.mNis.toFixed(3)}, Lag-1 ρ₁ = ${dSel.lag1 >= 0 ? '+' : ''}${dSel.lag1.toFixed(3)} (95% whiteness bound ±${dSel.wb95.toFixed(3)}).`);
+          interpLines.push(`• 3. Three-Way Real Data q: RW-KF q=${qRw.toExponential(2)} | Linear-KF q=${qLin.toExponential(2)} | Nonlinear-KF q=${qNl.toExponential(2)}.`);
         }
 
         document.getElementById('acc10StatusNote').textContent = note;
         const interpEl = document.getElementById('acc10Interp');
         interpEl.classList.remove('hidden');
-        interpEl.innerHTML = `<div class="font-bold text-sky-400 mb-1">Automated Engineering Interpretation</div>` + interpLines.map(l => `<div>${l}</div>`).join('');
+        interpEl.innerHTML = `<div class="font-bold text-sky-400 mb-1">Automated Engineering Interpretation (Three-Way Linear vs. Nonlinear vs. Ordinary KF)</div>` + interpLines.map(l => `<div>${l}</div>`).join('');
 
         const cards = [
           ['Estimated R [(m/s²)²]', rInjected ? `${rAcc.toExponential(3)} (Inj: ${rInjected.toExponential(2)})` : rAcc.toExponential(4)],
-          ['Identified q [(m/s²)²/s]', truthAcc ? `${qAcc.toExponential(3)} (Inj: ${qTrue.toExponential(2)})` : qAcc.toExponential(4)],
-          ['Q_step / Steady K', `${res.Q_step.toExponential(3)} / K=${lastK.toFixed(3)}`],
-          ['1D Mean NIS (exp ≈ 1.0)', truthAcc ? `NIS ${meanNis.toFixed(3)} | RMSE ${rmseKf.toFixed(4)}` : meanNis.toFixed(3)]
+          ['Fitted q (RW / Lin / NL)', `${qRw.toExponential(1)} / ${qLin.toExponential(1)} / ${qNl.toExponential(1)}`],
+          ['1D NIS / 1D NEES (≈1.0)', dSel.mNees !== null ? `NIS ${dSel.mNis.toFixed(3)} | NEES ${dSel.mNees.toFixed(3)}` : `NIS ${dSel.mNis.toFixed(3)}`],
+          ['RMSE (RW / Lin / NL)', dSel.rmse !== null ? `${dRw.rmse.toFixed(4)} / ${dLin.rmse.toFixed(4)} / ${dNl.rmse.toFixed(4)}` : `ρ₁=${dSel.lag1.toFixed(3)}`]
         ];
         document.getElementById('acc10Metrics').innerHTML = cards.map(([k, v]) => `<div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5"><div class="text-xs text-[var(--muted-foreground)]">${k}</div><div class="text-sm font-bold text-sky-400 mt-0.5">${v}</div></div>`).join('');
 
         const scale = unitMode === 'g' ? (1.0 / GRAVITY) : 1.0;
         const uLbl = unitMode === 'g' ? 'g' : 'm/s²';
         const traces = [
-          { label: `Raw Sensor [${uLbl}]`, color: '#ffbb66', values: aHold.map(v => v * scale), width: 1.0 },
-          { label: `Kalman Est [${uLbl}]`, color: '#5ac8fa', values: res.estimated.map(v => v * scale), width: 2.0 }
+          { label: `Raw [${uLbl}]`, color: '#ffbb66', values: aHold.map(v => v * scale), width: 0.8 },
+          { label: `1. RW-KF`, color: '#c792ea', values: resRw.estimated.map(v => v * scale), width: 1.5 },
+          { label: `2. Linear-KF`, color: '#ff7b89', values: resLin.estimated.map(v => v * scale), width: 1.7 },
+          { label: `3. Nonlinear-KF`, color: '#5ac8fa', values: resNl.estimated.map(v => v * scale), width: 2.1 }
         ];
-        if (truthAcc) traces.push({ label: `True Accel [${uLbl}]`, color: '#7ce3ab', values: truthAcc.map(v => v * scale), width: 1.6 });
-        if (tcFiltered) traces.push({ label: `TwinCAT Filtered [${uLbl}]`, color: '#db9bff', values: tcFiltered.map(v => v * scale), width: 1.4 });
-        drawMultiTracePlot('acc10Canvas', `Dynamic Acceleration: Raw Sensor vs. 1-State Kalman Filter [${uLbl}]`, tHold, traces);
+        if (truthAcc) traces.push({ label: `True Accel`, color: '#7ce3ab', values: truthAcc.map(v => v * scale), width: 1.6 });
+        if (tcFiltered) traces.push({ label: `TwinCAT LP`, color: '#db9bff', values: tcFiltered.map(v => v * scale), width: 1.4 });
+        drawMultiTracePlot('acc10Canvas', `Three-Way Acceleration Benchmark: RW-KF vs. Linear-KF vs. Nonlinear-KF [${uLbl}]`, tHold, traces);
 
-        drawMultiTracePlot('acc10KsCanvas', 'Kalman Gain K(t), Innovation Covariance S(t), and 1D NIS(t) (expected mean ≈ 1.0)', tHold, [
-          { label: 'Gain K [-]', color: '#5ac8fa', values: res.K, width: 1.8 },
-          { label: '1D NIS [-]', color: '#7ce3ab', values: res.nis.map(v => Math.min(v, 6.0)), width: 1.1 }
-        ]);
+        const ksTraces = [
+          { label: '1D NIS [-]', color: '#7ce3ab', values: res.nis.map(v => Math.min(v, 6.0)), width: 1.2 },
+          { label: 'Gain K [-]', color: '#ffbb66', values: res.K, width: 1.8 }
+        ];
+        if (dSel.neesArr && dSel.neesArr.length) {
+          ksTraces.unshift({ label: '1D NEES [-]', color: '#5ac8fa', values: dSel.neesArr.map(v => Math.min(v, 6.0)), width: 1.3 });
+        }
+        drawMultiTracePlot('acc10KsCanvas', 'Statistical Consistency: 1D NEES(t), 1D NIS(t), and Gain K(t) (expected mean ≈ 1.0)', tHold, ksTraces);
 
         lastAccKfReport = { t: tHold, measured: aHold, kalman: res.estimated, K: res.K, S: res.S, nis: res.nis, R: rAcc, q: qAcc, Q_step: res.Q_step, note };
-        setBanner(isBenchmark ? 'Completed Acceleration Q/R Identification Benchmark.' : 'Completed v4 1-state Acceleration Kalman Filter estimation.', false);
+        setBanner(isBenchmark ? 'Completed Three-Way (Ordinary vs. Linear vs. Nonlinear Prior) Benchmark.' : 'Completed v4 1-state Acceleration Kalman Filter estimation.', false);
       } catch (err) {
         setBanner(`⚠ Acceleration KF: ${err.message}`, true);
       }

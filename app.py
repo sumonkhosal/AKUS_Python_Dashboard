@@ -27,7 +27,8 @@ from akuskf import ModelParameters
 from akuskf.acceleration import (
     run_acceleration_filter, fit_acceleration_q, estimate_acceleration_r,
     analyze_acceleration_noise, jan_linear_acceleration_prior,
-    acceleration_diagnostics, run_acceleration_benchmark,
+    jan_nonlinear_acceleration_prior, acceleration_diagnostics,
+    run_acceleration_benchmark,
 )
 from akuskf.synthetic import generate as generate_jan_synthetic
 from kalman_lab import _decimate
@@ -864,11 +865,12 @@ with tabs[10]:
                 'Acceleration prediction model',
                 [
                     'Measured acceleration only (random-walk model)',
-                    'Jan linear physics force prediction (model-informed)',
+                    'Jan linear physics force prediction (linear prior)',
+                    'Jan nonlinear Euler physics prediction (Coulomb + position friction prior)',
                 ],
-                index=1 if is_synthetic else 0,
-                help='Random-walk baseline uses a[k+1] = a[k] + w[k]. Model-informed mode predicts acceleration '
-                     'from Jan’s physical force balance and filters the residual d[k].',
+                index=(2 if 'nonlinear' in source_acc else (1 if is_synthetic else 0)),
+                help='Choose (1) Ordinary random-walk KF (prior=None), (2) Jan linear force prior, or '
+                     '(3) Jan complete nonlinear Euler force prior with Coulomb + position-dependent friction.',
             )
             acc_backend = st.selectbox(
                 'Filtering backend',
@@ -974,6 +976,10 @@ with tabs[10]:
                 )
                 if is_synthetic or go_bench_acc:
                     plant = 'jan_euler' if 'nonlinear' in source_acc else 'linear'
+                    sel_prior_mode = (
+                        'nonlinear' if 'nonlinear' in prior_choice
+                        else ('linear' if 'linear' in prior_choice else 'none')
+                    )
                     bench_out = run_acceleration_benchmark(
                         plant=plant,
                         dt=dt_target,
@@ -982,7 +988,8 @@ with tabs[10]:
                         q_true=float(inj_q_acc),
                         sensor_std_a=float(sd_acc),
                         seed=int(seed_acc),
-                        use_prior=prior_choice.startswith('Jan linear'),
+                        use_prior=(sel_prior_mode != 'none'),
+                        prior_mode=sel_prior_mode,
                         backend=acc_backend,
                         fit_q=use_fit,
                         q_manual=float(manual_q_acc),
@@ -1000,12 +1007,19 @@ with tabs[10]:
                         fit_acc = {'near_bound': False, 'converged': True, 'method': 'manual'}
 
                     result_acc = bench_out['filter_result']
+                    res_lin = bench_out['linear_prior_result']
+                    res_nl = bench_out['nonlinear_prior_result']
+                    res_rw = bench_out['random_walk_result']
                     t_hold = bench_out['t_val']
                     a_hold = bench_out['y_val']
                     truth_acc = bench_out['truth_val']
+                    lin_prior_hold = bench_out['linear_prior_val']
+                    nl_prior_hold = bench_out['nonlinear_prior_val']
+                    jan_prior_hold = bench_out['prior_val']
                     compare_acc = None
                     noise_rep = bench_out['noise_report']
                     metrics_acc = bench_out['metrics']
+                    ablation_acc = bench_out['ablation']
                     interp_list = bench_out['interpretation']
                     source_note = (
                         f'Synthetic ({plant}) · Independent train (seed={int(seed_acc)}) & '
@@ -1042,36 +1056,67 @@ with tabs[10]:
                     truth_acc = None
                     compare_acc = motion_ds['fAccZ'].to_numpy(float) - float(stationary_ds['fAccZ'].mean())
 
-                    if prior_choice.startswith('Jan linear'):
-                        force = params.motor_force(
-                            motion_ds['fTorque1'].to_numpy(float),
-                            motion_ds['fTorque2'].to_numpy(float),
-                        )
-                        u = params.u_from_force(force)
-                        prior_hold = jan_linear_acceleration_prior(u, actual_dt, params)
-                    else:
-                        prior_hold = None
+                    force = params.motor_force(
+                        motion_ds['fTorque1'].to_numpy(float),
+                        motion_ds['fTorque2'].to_numpy(float),
+                    )
+                    u = params.u_from_force(force)
+                    lin_prior_hold = jan_linear_acceleration_prior(u, actual_dt, params)
+                    nl_prior_hold = jan_nonlinear_acceleration_prior(u, actual_dt, params)
+                    sel_prior_mode = (
+                        'nonlinear' if 'nonlinear' in prior_choice
+                        else ('linear' if 'linear' in prior_choice else 'none')
+                    )
+                    jan_prior_hold = (
+                        nl_prior_hold if sel_prior_mode == 'nonlinear'
+                        else (lin_prior_hold if sel_prior_mode == 'linear' else np.zeros_like(a_hold))
+                    )
+                    prior_hold = None if sel_prior_mode == 'none' else jan_prior_hold
 
                     cut = max(60, min(len(a_hold) - 30, int(len(a_hold) * 0.55)))
                     a_train = a_hold[:cut]
-                    prior_train = prior_hold[:cut] if prior_hold is not None else None
 
                     if use_fit:
-                        q_acc, fit_acc = fit_acceleration_q(
-                            a_train, actual_dt, Racc, prior_ms2=prior_train, method=q_fit_method
+                        q_rw, fit_rw = fit_acceleration_q(
+                            a_train, actual_dt, Racc, prior_ms2=None, method=q_fit_method
+                        )
+                        q_lin, fit_lin = fit_acceleration_q(
+                            a_train, actual_dt, Racc, prior_ms2=lin_prior_hold[:cut], method=q_fit_method
+                        )
+                        q_nl, fit_nl = fit_acceleration_q(
+                            a_train, actual_dt, Racc, prior_ms2=nl_prior_hold[:cut], method=q_fit_method
                         )
                     else:
-                        q_acc = float(manual_q_acc)
-                        fit_acc = {'near_bound': False, 'converged': True, 'method': 'manual'}
+                        q_rw = q_lin = q_nl = float(manual_q_acc)
+                        fit_rw = fit_lin = fit_nl = {'near_bound': False, 'converged': True, 'method': 'manual'}
 
-                    result_acc = run_acceleration_filter(
-                        a_hold, actual_dt, Racc, q_acc, prior_ms2=prior_hold, backend=acc_backend
+                    res_rw = run_acceleration_filter(
+                        a_hold, actual_dt, Racc, q_rw, prior_ms2=None, backend=acc_backend
                     )
+                    res_lin = run_acceleration_filter(
+                        a_hold, actual_dt, Racc, q_lin, prior_ms2=lin_prior_hold, backend=acc_backend
+                    )
+                    res_nl = run_acceleration_filter(
+                        a_hold, actual_dt, Racc, q_nl, prior_ms2=nl_prior_hold, backend=acc_backend
+                    )
+                    if sel_prior_mode == 'nonlinear':
+                        result_acc, q_acc, fit_acc = res_nl, q_nl, fit_nl
+                    elif sel_prior_mode == 'linear':
+                        result_acc, q_acc, fit_acc = res_lin, q_lin, fit_lin
+                    else:
+                        result_acc, q_acc, fit_acc = res_rw, q_rw, fit_rw
+
                     ref_check = run_acceleration_filter(
                         a_hold, actual_dt, Racc, q_acc, prior_ms2=prior_hold, backend='reference'
                     )
                     burn_acc = cut
-                    metrics_acc = acceleration_diagnostics(result_acc, None, burn=burn_acc, raw_measured=a_hold)
+                    diag_rw = acceleration_diagnostics(res_rw, None, burn=burn_acc, raw_measured=a_hold)
+                    diag_lin = acceleration_diagnostics(res_lin, None, burn=burn_acc, raw_measured=a_hold)
+                    diag_nl = acceleration_diagnostics(res_nl, None, burn=burn_acc, raw_measured=a_hold)
+                    metrics_acc = dict(
+                        diag_nl if sel_prior_mode == 'nonlinear'
+                        else (diag_lin if sel_prior_mode == 'linear' else diag_rw)
+                    )
                     metrics_acc['r_estimated'] = Racc
                     metrics_acc['q_estimated'] = q_acc
                     metrics_acc['Q_step_estimated'] = float(result_acc['Q_step'])
@@ -1080,32 +1125,70 @@ with tabs[10]:
                     metrics_acc['backend_max_abs_diff'] = float(
                         np.max(np.abs(result_acc['estimated_acc_ms2'] - ref_check['estimated_acc_ms2']))
                     )
+                    ablation_acc = {
+                        'random_walk_kf': {
+                            'q_estimated': float(q_rw),
+                            'Q_step': float(res_rw['Q_step']),
+                            'K_steady': float(res_rw['K'][-1]),
+                            'mean_nis': diag_rw['mean_nis'],
+                            'innovation_lag1': diag_rw['innovation_lag1'],
+                            'ljung_box_pvalue': diag_rw['ljung_box_pvalue'],
+                        },
+                        'linear_prior_kf': {
+                            'q_estimated': float(q_lin),
+                            'Q_step': float(res_lin['Q_step']),
+                            'K_steady': float(res_lin['K'][-1]),
+                            'mean_nis': diag_lin['mean_nis'],
+                            'innovation_lag1': diag_lin['innovation_lag1'],
+                            'ljung_box_pvalue': diag_lin['ljung_box_pvalue'],
+                        },
+                        'nonlinear_prior_kf': {
+                            'q_estimated': float(q_nl),
+                            'Q_step': float(res_nl['Q_step']),
+                            'K_steady': float(res_nl['K'][-1]),
+                            'mean_nis': diag_nl['mean_nis'],
+                            'innovation_lag1': diag_nl['innovation_lag1'],
+                            'ljung_box_pvalue': diag_nl['ljung_box_pvalue'],
+                        },
+                    }
                     source_note = (
                         f'Real Earth hardware (stationary baseline = {g0:.6f} g subtracted; '
                         f'20 ms decimated stationary SD = {std_20ms:.5f} m/s², raw 2 kHz SD = {raw_2khz_std:.5f} m/s²).'
                     )
                     interp_list = [
-                        f'Stationary Earth Calibration (2–10 s): Baseline = {g0:.6f} g; at Δt = {actual_dt*1000:.1f} ms, '
+                        f'1. Stationary Earth Calibration (2–10 s): Baseline = {g0:.6f} g; at Δt = {actual_dt*1000:.1f} ms, '
                         f'estimated R = {Racc:.4e} (m/s²)² (SD = {np.sqrt(Racc):.5f} m/s²; at 20 ms SD ≈ {std_20ms:.5f} m/s²).',
-                        f'Dynamic Segment Identification: Fitted q = {q_acc:.4e} (m/s²)²/s (Q_step = {result_acc["Q_step"]:.4e} (m/s²)²). '
-                        f'Steady-state Kalman gain K = {result_acc["K"][-1]:.4f}.',
-                        'Earth Hardware Caveat: Real moving acceleration includes structural vibration and spindle harmonics; '
-                        'TwinCAT’s 10 Hz low-pass (fAccZ) is shown for comparison only and is NOT ground truth.',
+                        f'2. Innovation Whiteness & Consistency: Held-out 1D Mean NIS = {metrics_acc["mean_nis"]:.3f}, '
+                        f'lag-1 autocorrelation ρ₁ = {metrics_acc["innovation_lag1"]:+.3f} '
+                        f'(95% whiteness bound ±{metrics_acc["innovation_whiteness_bound_95"]:.3f}, Ljung-Box p = {metrics_acc["ljung_box_pvalue"]:.3f}).',
+                        f'3. Three-Way Comparison on Real Data: RW-KF q = {q_rw:.3e}, Linear-Prior KF q = {q_lin:.3e}, '
+                        f'Nonlinear-Prior KF q = {q_nl:.3e}.',
                     ]
 
                 export_acc = pd.DataFrame({
                     'time_s': t_hold,
                     'acc_measured_ms2': a_hold,
                     'acc_kalman_ms2': result_acc['estimated_acc_ms2'],
+                    'acc_kalman_rw_ms2': res_rw['estimated_acc_ms2'],
+                    'acc_kalman_lin_ms2': res_lin['estimated_acc_ms2'],
+                    'acc_kalman_nl_ms2': res_nl['estimated_acc_ms2'],
+                    'acc_prior_lin_ms2': lin_prior_hold,
+                    'acc_prior_nl_ms2': nl_prior_hold,
                     'acc_std_ms2': result_acc['std_acc_ms2'],
                     'acc_measured_g': a_hold / 9.80665,
                     'acc_kalman_g': result_acc['estimated_acc_ms2'] / 9.80665,
-                    'acc_prior_ms2': result_acc['prior_ms2'],
+                    'acc_kalman_rw_g': res_rw['estimated_acc_ms2'] / 9.80665,
+                    'acc_kalman_lin_g': res_lin['estimated_acc_ms2'] / 9.80665,
+                    'acc_kalman_nl_g': res_nl['estimated_acc_ms2'] / 9.80665,
+                    'acc_prior_lin_g': lin_prior_hold / 9.80665,
+                    'acc_prior_nl_g': nl_prior_hold / 9.80665,
                     'innovation_ms2': result_acc['innovation'],
                     'K': result_acc['K'],
                     'S': result_acc['S'],
                     'NIS': result_acc['nis'],
                 })
+                if 'nees' in result_acc:
+                    export_acc['NEES'] = result_acc['nees']
                 if truth_acc is not None:
                     export_acc['acc_truth_ms2'] = truth_acc
                     export_acc['acc_truth_g'] = truth_acc / 9.80665
@@ -1122,6 +1205,7 @@ with tabs[10]:
                     'noise_report': noise_rep,
                     'fit': fit_acc,
                     'metrics': metrics_acc,
+                    'ablation': ablation_acc,
                     'interpretation': interp_list,
                     'source': source_note,
                     'synthetic': is_synthetic or go_bench_acc,
@@ -1136,6 +1220,7 @@ with tabs[10]:
         ar = st.session_state.v4_acc_result
         met = ar['metrics']
         nr = ar['noise_report']
+        abl = ar.get('ablation', {})
         st.caption(ar['source'])
 
         c1, c2, c3, c4 = st.columns(4)
@@ -1147,22 +1232,110 @@ with tabs[10]:
         c4.metric('Steady-state gain K', f'{ar["df"]["K"].iloc[-1]:.4f}')
 
         d1, d2, d3, d4 = st.columns(4)
-        d1.metric('Sensor Noise SD [m/s²]', f'{nr["std_estimated_ms2"]:.5f}')
+        d1.metric('Innovation Lag-1 ρ₁ (White ≈ 0)',
+                  f'{met["innovation_lag1"]:+.3f}',
+                  delta=f'95% bound ±{met.get("innovation_whiteness_bound_95", 0.064):.3f} | LB p={met.get("ljung_box_pvalue", 1.0):.2f}')
         d2.metric('1D Mean NIS (expected ≈ 1.0)', f'{met["mean_nis"]:.3f}')
         if 'kalman_acc_rmse_ms2' in met:
-            d3.metric('Raw → Kalman RMSE [m/s²]',
-                      f'{met["kalman_acc_rmse_ms2"]:.4f}',
-                      delta=f'{met["kalman_acc_rmse_ms2"] - met["raw_acc_rmse_ms2"]:+.4f} m/s²',
-                      delta_color='inverse')
-            d4.metric('1D Mean NEES (expected ≈ 1.0)', f'{met["mean_nees"]:.3f}')
+            d3.metric('Selected KF vs RW-KF RMSE [m/s²]',
+                      f'{met["kalman_acc_rmse_ms2"]:.5f}',
+                      delta=f'RW-KF: {met.get("rw_kf_rmse_ms2", 0.0):.5f} ({met.get("model_vs_rw_rmse_improvement_pct", 0.0):+.1f}%)',
+                      delta_color='normal')
+            d4.metric('1D Mean NEES (expected ≈ 1.0)',
+                      f'{met["mean_nees"]:.3f}',
+                      delta=f'95% Cov: {met.get("acc_95pct_coverage", 0.0)*100:.1f}%')
         else:
             d3.metric('Stationary 20ms SD [m/s²]', f'{met.get("stationary_20ms_std_ms2", 0.0):.5f}')
-            d4.metric('Innovation Lag-1 Corr', f'{met.get("innovation_lag1", 0.0):.3f}')
+            d4.metric('Sensor Noise SD [m/s²]', f'{nr["std_estimated_ms2"]:.5f}')
 
         if ar.get('interpretation'):
-            st.markdown('#### Automated Engineering Interpretation')
+            st.markdown('#### Automated Engineering Interpretation (Prior Accuracy, Consistency & 3-Way Ablation)')
             for line in ar['interpretation']:
                 st.markdown(f'- {line}')
+
+        if abl and 'linear_prior_only' in abl:
+            st.markdown('#### Three-Way Benchmark: Ordinary RW-KF (`prior=None`) vs. Linear-Prior KF vs. Nonlinear-Prior KF')
+            lin_pr = abl['linear_prior_only']
+            nl_pr = abl['nonlinear_prior_only']
+            rw_info = abl['random_walk_kf']
+            lin_kf = abl['linear_prior_kf']
+            nl_kf = abl['nonlinear_prior_kf']
+            raw_info = abl['raw_sensor']
+            ablation_rows = [
+                {
+                    'Estimator / Stage': '0. Raw Accelerometer Sensor (No Filter)',
+                    'Fitted q [(m/s²)²/s]': '—',
+                    'Steady Gain K': '1.0000',
+                    'Held-Out RMSE [m/s²]': f'{raw_info["rmse_ms2"]:.5f}',
+                    'Held-Out MAE [m/s²]': f'{raw_info["mae_ms2"]:.5f}',
+                    '1D Mean NIS (≈1.0)': '—',
+                    '1D Mean NEES (≈1.0)': '—',
+                    '95% Coverage': '—',
+                    'Innov Lag-1 ρ₁': '—',
+                    'Ljung-Box p': '—',
+                },
+                {
+                    'Estimator / Stage': '0a. Open-Loop Jan Linear Prior Only (No KF)',
+                    'Fitted q [(m/s²)²/s]': '0 (deterministic)',
+                    'Steady Gain K': '0.0000',
+                    'Held-Out RMSE [m/s²]': f'{lin_pr["prior_rmse_ms2"]:.5f}',
+                    'Held-Out MAE [m/s²]': f'{lin_pr["prior_mae_ms2"]:.5f}',
+                    '1D Mean NIS (≈1.0)': '—',
+                    '1D Mean NEES (≈1.0)': '—',
+                    '95% Coverage': f'R² = {lin_pr["prior_r2_score"]:.3f}',
+                    'Innov Lag-1 ρ₁': '—',
+                    'Ljung-Box p': '—',
+                },
+                {
+                    'Estimator / Stage': '0b. Open-Loop Jan Nonlinear Prior Only (No KF)',
+                    'Fitted q [(m/s²)²/s]': '0 (deterministic)',
+                    'Steady Gain K': '0.0000',
+                    'Held-Out RMSE [m/s²]': f'{nl_pr["prior_rmse_ms2"]:.5f}',
+                    'Held-Out MAE [m/s²]': f'{nl_pr["prior_mae_ms2"]:.5f}',
+                    '1D Mean NIS (≈1.0)': '—',
+                    '1D Mean NEES (≈1.0)': '—',
+                    '95% Coverage': f'R² = {nl_pr["prior_r2_score"]:.3f}',
+                    'Innov Lag-1 ρ₁': '—',
+                    'Ljung-Box p': '—',
+                },
+                {
+                    'Estimator / Stage': '1. Ordinary Acceleration KF (prior_ms2 = None)',
+                    'Fitted q [(m/s²)²/s]': f'{rw_info["q_estimated"]:.4e}',
+                    'Steady Gain K': f'{rw_info["K_steady"]:.4f}',
+                    'Held-Out RMSE [m/s²]': f'{rw_info["rmse_ms2"]:.5f}',
+                    'Held-Out MAE [m/s²]': f'{rw_info["mae_ms2"]:.5f}',
+                    '1D Mean NIS (≈1.0)': f'{rw_info["mean_nis"]:.3f}',
+                    '1D Mean NEES (≈1.0)': f'{rw_info["mean_nees"]:.3f}',
+                    '95% Coverage': f'{rw_info["coverage_95pct"]*100:.1f}%',
+                    'Innov Lag-1 ρ₁': f'{rw_info["innovation_lag1"]:+.3f}',
+                    'Ljung-Box p': f'{rw_info["ljung_box_pvalue"]:.3f}',
+                },
+                {
+                    'Estimator / Stage': '2. Linear Physics-Guided KF (Jan Linear Prior)',
+                    'Fitted q [(m/s²)²/s]': f'{lin_kf["q_estimated"]:.4e}',
+                    'Steady Gain K': f'{lin_kf["K_steady"]:.4f}',
+                    'Held-Out RMSE [m/s²]': f'{lin_kf["rmse_ms2"]:.5f}',
+                    'Held-Out MAE [m/s²]': f'{lin_kf["mae_ms2"]:.5f}',
+                    '1D Mean NIS (≈1.0)': f'{lin_kf["mean_nis"]:.3f}',
+                    '1D Mean NEES (≈1.0)': f'{lin_kf["mean_nees"]:.3f}',
+                    '95% Coverage': f'{lin_kf["coverage_95pct"]*100:.1f}%',
+                    'Innov Lag-1 ρ₁': f'{lin_kf["innovation_lag1"]:+.3f}',
+                    'Ljung-Box p': f'{lin_kf["ljung_box_pvalue"]:.3f}',
+                },
+                {
+                    'Estimator / Stage': '3. Nonlinear Physics-Guided KF (Jan Nonlinear Prior)',
+                    'Fitted q [(m/s²)²/s]': f'{nl_kf["q_estimated"]:.4e}',
+                    'Steady Gain K': f'{nl_kf["K_steady"]:.4f}',
+                    'Held-Out RMSE [m/s²]': f'{nl_kf["rmse_ms2"]:.5f}',
+                    'Held-Out MAE [m/s²]': f'{nl_kf["mae_ms2"]:.5f}',
+                    '1D Mean NIS (≈1.0)': f'{nl_kf["mean_nis"]:.3f}',
+                    '1D Mean NEES (≈1.0)': f'{nl_kf["mean_nees"]:.3f}',
+                    '95% Coverage': f'{nl_kf["coverage_95pct"]*100:.1f}%',
+                    'Innov Lag-1 ρ₁': f'{nl_kf["innovation_lag1"]:+.3f}',
+                    'Ljung-Box p': f'{nl_kf["ljung_box_pvalue"]:.3f}',
+                },
+            ]
+            st.dataframe(pd.DataFrame(ablation_rows), hide_index=True, use_container_width=True)
 
         if ar['fit'].get('near_bound'):
             st.warning('Model-identification warning: Estimated q reached its optimization boundary. '
@@ -1176,20 +1349,24 @@ with tabs[10]:
 
         use_g = str(ar.get('unit_mode', '')).startswith('g')
         unit_lbl = 'g' if use_g else 'm/s²'
-        st.markdown(f'#### Dynamic Acceleration Trajectory [{unit_lbl}]')
+        st.markdown(f'#### Dynamic Acceleration: Ground Truth vs. 1. Ordinary RW-KF vs. 2. Linear-Prior KF vs. 3. Nonlinear-Prior KF [{unit_lbl}]')
         ac = ar['df']
         fig = go.Figure()
         if use_g:
             series = [
                 ('acc_measured_g', 'Unfiltered measured acceleration [g]', '#ffbb66'),
-                ('acc_kalman_g', 'Python Kalman-filtered acceleration [g]', '#5ac8fa'),
+                ('acc_kalman_rw_g', '1. Ordinary RW-KF (prior=None) [g]', '#c792ea'),
+                ('acc_kalman_lin_g', '2. Linear Prior KF [g]', '#ff7b89'),
+                ('acc_kalman_nl_g', '3. Nonlinear Prior KF [g]', '#5ac8fa'),
                 ('acc_truth_g', 'Known synthetic true acceleration [g]', '#7ce3ab'),
                 ('twinCAT_filtered_acc_g_centered', 'Existing TwinCAT filtered acceleration [g]', '#db9bff'),
             ]
         else:
             series = [
                 ('acc_measured_ms2', 'Unfiltered measured acceleration [m/s²]', '#ffbb66'),
-                ('acc_kalman_ms2', 'Python Kalman-filtered acceleration [m/s²]', '#5ac8fa'),
+                ('acc_kalman_rw_ms2', '1. Ordinary RW-KF (prior=None) [m/s²]', '#c792ea'),
+                ('acc_kalman_lin_ms2', '2. Linear Prior KF [m/s²]', '#ff7b89'),
+                ('acc_kalman_nl_ms2', '3. Nonlinear Prior KF [m/s²]', '#5ac8fa'),
                 ('acc_truth_ms2', 'Known synthetic true acceleration [m/s²]', '#7ce3ab'),
                 ('twinCAT_filtered_acc_ms2_centered', 'Existing TwinCAT filtered acceleration [m/s²]', '#db9bff'),
             ]
@@ -1197,14 +1374,14 @@ with tabs[10]:
             if k in ac.columns:
                 fig.add_trace(go.Scatter(x=ac.time_s, y=ac[k], name=name, mode='lines', line=dict(color=color)))
         fig.update_layout(
-            template='plotly_dark', height=410,
+            template='plotly_dark', height=420,
             xaxis_title='Time [s]', yaxis_title=f'Dynamic acceleration [{unit_lbl}]',
             hovermode='x unified',
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown('#### Kalman Gain K(t), Innovation Covariance S(t), and 1D NIS(t)')
-        ca, cb = st.columns(2)
+        st.markdown('#### Statistical Consistency: K(t), S(t), 1D NIS(t), 1D NEES(t), and Innovation Whiteness ACF')
+        ca, cb, cc = st.columns(3)
         with ca:
             fig_ks = go.Figure([
                 go.Scatter(x=ac.time_s, y=ac['K'], name='Kalman Gain K [-]', mode='lines'),
@@ -1213,12 +1390,27 @@ with tabs[10]:
             fig_ks.update_layout(template='plotly_dark', height=280, title='Filter Gain K(t) & Innovation Covariance S(t)', xaxis_title='Time [s]')
             st.plotly_chart(fig_ks, use_container_width=True)
         with cb:
-            fig_nis = go.Figure([
+            traces_consistency = [
                 go.Scatter(x=ac.time_s, y=ac['NIS'], name='1D NIS', mode='lines', line=dict(color='#7ce3ab')),
-            ])
+            ]
+            if 'NEES' in ac.columns:
+                traces_consistency.append(
+                    go.Scatter(x=ac.time_s, y=ac['NEES'], name='1D NEES', mode='lines', line=dict(color='#5ac8fa'))
+                )
+            fig_nis = go.Figure(traces_consistency)
             fig_nis.add_hline(y=1.0, line_dash='dot', line_color='#ffbb66', annotation_text='Expected 1D mean = 1.0')
-            fig_nis.update_layout(template='plotly_dark', height=280, title='Normalized Innovation Squared (1D, df=1)', xaxis_title='Time [s]')
+            fig_nis.update_layout(template='plotly_dark', height=280, title='1D NIS(t) & 1D NEES(t) (df=1)', xaxis_title='Time [s]')
             st.plotly_chart(fig_nis, use_container_width=True)
+        with cc:
+            wb = met.get('innovation_whiteness_bound_95', 0.064)
+            fig_iacf = go.Figure([
+                go.Bar(x=met.get('innovation_acf_lags', []), y=met.get('innovation_acf_values', []), name='Innovation ACF')
+            ])
+            fig_iacf.add_hline(y=wb, line_dash='dash', line_color='#ffbb66', annotation_text='+95% white')
+            fig_iacf.add_hline(y=-wb, line_dash='dash', line_color='#ffbb66', annotation_text='-95% white')
+            fig_iacf.update_layout(template='plotly_dark', height=280, title='Innovation Autocorrelation (Whiteness Test)',
+                                   xaxis_title='Lag [samples]', yaxis_title='ACF')
+            st.plotly_chart(fig_iacf, use_container_width=True)
 
         with st.expander('Sensor Noise Characterization · Histogram, Autocorrelation & Power Spectral Density', expanded=True):
             n1, n2, n3 = st.columns(3)
