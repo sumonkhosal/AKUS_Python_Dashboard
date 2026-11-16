@@ -1,66 +1,185 @@
-"""Tests of v4 acceleration-specific estimator (not the 2-state Jan Kalman)."""
+"""Comprehensive automated tests for the v4 Acceleration-First Kalman module (Section 14)."""
+from pathlib import Path
+import io
+import py_compile
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
+
 from akuskf.acceleration import (
-    run_acceleration_filter, fit_acceleration_q, estimate_acceleration_r,
-    jan_linear_acceleration_prior, acceleration_diagnostics,
+    run_acceleration_filter,
+    fit_acceleration_q,
+    estimate_acceleration_r,
+    analyze_acceleration_noise,
+    jan_linear_acceleration_prior,
+    acceleration_diagnostics,
+    run_acceleration_benchmark,
 )
 from akuskf.synthetic import generate
 from akuskf.jan_model import ModelParameters
-from kalman_lab import _decimate
+from kalman_lab import _decimate, load_twincat_csv
 
 
 def test_known_acceleration_random_walk_recover_process_q_and_R():
-    dt=.02; q_true=.001; r_true=.04**2
-    rng=np.random.default_rng(15)
-    n=3500
-    a_true=np.cumsum(rng.normal(0,np.sqrt(q_true*dt),n))
-    meas=a_true+rng.normal(0,np.sqrt(r_true),n)
-    independent_stationary=rng.normal(0,np.sqrt(r_true),3000)
-    r,corr=estimate_acceleration_r(independent_stationary)
-    assert .90*r_true<r<1.10*r_true
-    assert abs(corr)<.10
-    q,info=fit_acceleration_q(meas[:2000],dt,r,q_bounds=(1e-6,.2))
-    assert .35*q_true<q<2.5*q_true
-    val=run_acceleration_filter(meas[2000:],dt,r,q)
-    diagnostics=acceleration_diagnostics(val,a_true[2000:])
-    assert diagnostics['kalman_acc_rmse_ms2'] < np.sqrt(np.mean((meas[2000:]-a_true[2000:])**2))
-    assert val['S'].shape==(1500,) and val['K'].shape==(1500,)
-    assert np.all((val['K']>0)&(val['K']<1))
-    assert info['converged']
+    dt = 0.02
+    q_true = 0.001
+    r_true = 0.04 ** 2
+    rng = np.random.default_rng(15)
+    n = 3500
+    a_true = np.cumsum(rng.normal(0, np.sqrt(q_true * dt), n))
+    meas = a_true + rng.normal(0, np.sqrt(r_true), n)
+    independent_stationary = rng.normal(0, np.sqrt(r_true), 3000)
+    r, corr = estimate_acceleration_r(independent_stationary)
+    assert 0.90 * r_true < r < 1.10 * r_true
+    assert abs(corr) < 0.10
+    q, info = fit_acceleration_q(meas[:2000], dt, r, q_bounds=(1e-6, 0.2))
+    assert 0.35 * q_true < q < 2.5 * q_true
+    val = run_acceleration_filter(meas[2000:], dt, r, q)
+    diagnostics = acceleration_diagnostics(val, a_true[2000:], raw_measured=meas[2000:])
+    assert diagnostics["kalman_acc_rmse_ms2"] < diagnostics["raw_acc_rmse_ms2"]
+    assert diagnostics["kalman_acc_mae_ms2"] < diagnostics["raw_acc_mae_ms2"]
+    assert val["S"].shape == (1500,) and val["K"].shape == (1500,)
+    assert np.all((val["K"] > 0) & (val["K"] < 1))
+    assert info["converged"]
+
+
+@pytest.mark.parametrize("seed", [11, 29, 73])
+def test_r_identification_approaches_injected_across_seeds(seed):
+    r_injected = 0.035 ** 2
+    rng = np.random.default_rng(seed)
+    residuals = rng.normal(0.0, np.sqrt(r_injected), size=4000)
+    report = analyze_acceleration_noise(residuals, dt=0.01, r_injected=r_injected)
+    assert abs(report["relative_error"]) < 0.08
+    assert np.isclose(report["std_estimated_ms2"] ** 2, report["r_estimated"])
+    assert len(report["hist_centers"]) == 35
+    assert len(report["psd_freq_hz"]) > 10
+
+
+def test_filterpy_backend_matches_reference_exactly():
+    pytest.importorskip("filterpy")
+    rng = np.random.default_rng(99)
+    y = np.cumsum(rng.normal(0.0, 0.005, size=400)) + rng.normal(0.0, 0.03, size=400)
+    prior = 0.02 * np.sin(np.linspace(0, 6.0, 400))
+    ref = run_acceleration_filter(y, 0.01, 0.03 ** 2, 0.002, prior_ms2=prior, backend="reference")
+    fp = run_acceleration_filter(y, 0.01, 0.03 ** 2, 0.002, prior_ms2=prior, backend="filterpy")
+    np.testing.assert_allclose(fp["estimated_acc_ms2"], ref["estimated_acc_ms2"], rtol=1e-10, atol=1e-12)
+    np.testing.assert_allclose(fp["K"], ref["K"], rtol=1e-10, atol=1e-12)
+    np.testing.assert_allclose(fp["S"], ref["S"], rtol=1e-10, atol=1e-12)
+    np.testing.assert_allclose(fp["P"], ref["P"], rtol=1e-10, atol=1e-12)
+
+
+@pytest.mark.parametrize("seed", [42, 108])
+def test_acceleration_benchmark_improves_rmse_and_mae_across_seeds(seed):
+    out = run_acceleration_benchmark(
+        plant="linear",
+        dt=0.01,
+        n_train=900,
+        n_validation=900,
+        q_true=0.001,
+        sensor_std_a=0.04,
+        seed=seed,
+        use_prior=True,
+        backend="filterpy",
+        fit_q=True,
+    )
+    m = out["metrics"]
+    assert m["kalman_acc_rmse_ms2"] < m["raw_acc_rmse_ms2"]
+    assert m["kalman_acc_mae_ms2"] < m["raw_acc_mae_ms2"]
+    assert m["backend_max_abs_diff"] < 1e-11
+    # 1D NIS and 1D NEES should have expected mean ~ 1.0 (not 2.0)
+    lo, hi = m["nis_95pct_interval_1d"]
+    assert 0.75 < lo < 1.0 < hi < 1.30
+    assert 0.65 < m["mean_nis"] < 1.45
+    assert 0.55 < m["mean_nees"] < 1.65
+
+
+def test_nonlinear_euler_mismatch_detected_in_acceleration_benchmark():
+    out = run_acceleration_benchmark(
+        plant="jan_euler",
+        dt=0.01,
+        n_train=900,
+        n_validation=900,
+        q_true=0.0002,
+        sensor_std_a=0.03,
+        seed=42,
+        use_prior=True,
+    )
+    # Linear force prior omits nonlinear Coulomb/position friction, so fitted q inflates
+    assert out["metrics"]["q_estimated"] > out["metrics"]["q_injected"] * 1.5
+    assert any("Nonlinear Friction Mismatch" in s for s in out["interpretation"])
+
+
+def test_em_and_mle_q_identification():
+    rng = np.random.default_rng(321)
+    dt = 0.01
+    q_true = 0.002
+    r_true = 0.03 ** 2
+    a_true = np.cumsum(rng.normal(0.0, np.sqrt(q_true * dt), size=1200))
+    y = a_true + rng.normal(0.0, np.sqrt(r_true), size=1200)
+    q_mle, info_mle = fit_acceleration_q(y, dt, r_true, method="mle")
+    q_em, info_em = fit_acceleration_q(y, dt, r_true, method="em")
+    assert info_mle["converged"] and info_em["converged"]
+    assert 0.3 * q_true < q_mle < 3.0 * q_true
+    assert 0.3 * q_true < q_em < 3.0 * q_true
 
 
 def test_linear_force_prior_does_not_use_measurements_or_truth():
-    sim=generate(N=230,dt=.02,plant='linear',seed=123)
-    prior=jan_linear_acceleration_prior(sim['u'],.02,ModelParameters())
-    assert prior.shape==(230,) and np.isfinite(prior).all()
-    # Independent, exact linear dynamics mean expected acceleration matches
-    # up to stochastic disturbances; should remain close on this fixture.
-    assert np.sqrt(np.mean((prior-sim['acc_truth'])**2))<.008
+    sim = generate(N=230, dt=0.02, plant="linear", seed=123)
+    prior = jan_linear_acceleration_prior(sim["u"], 0.02, ModelParameters())
+    assert prior.shape == (230,) and np.isfinite(prior).all()
+    assert np.sqrt(np.mean((prior - sim["acc_truth"]) ** 2)) < 0.008
 
 
 def test_acceleration_filter_rejects_invalid_noise():
-    with pytest.raises(ValueError):run_acceleration_filter([0.,1.],.01,0.,1e-3)
-    with pytest.raises(ValueError):run_acceleration_filter([0.,1.],.01,.01,-1)
-    with pytest.raises(ValueError):run_acceleration_filter([0.,1.],.01,.01,1e-3,prior_ms2=[0])
+    with pytest.raises(ValueError):
+        run_acceleration_filter([0.0, 1.0], 0.01, 0.0, 1e-3)
+    with pytest.raises(ValueError):
+        run_acceleration_filter([0.0, 1.0], 0.01, 0.01, -1.0)
+    with pytest.raises(ValueError):
+        run_acceleration_filter([0.0, 1.0], 0.01, 0.01, 1e-3, prior_ms2=[0.0])
 
 
 def test_real_earth_replay_sample_noise_and_filter():
-    root=Path(__file__).resolve().parents[1]
-    stationary=pd.read_csv(root/'examples'/'akus_stationary_REAL.csv')
-    motion=pd.read_csv(root/'examples'/'akus_movement_REAL.csv')
-    st,dt=_decimate(stationary,.01)
-    mo,dt2=_decimate(motion,.01)
-    assert dt == pytest.approx(.01,abs=.001) and dt2 == pytest.approx(.01,abs=.001)
-    baseline=stationary.fAccZUnfiltered.median()
-    cal=(st.fAccZUnfiltered.to_numpy()-baseline)*9.80665
-    y=(mo.fAccZUnfiltered.to_numpy()-baseline)*9.80665
-    r,corr=estimate_acceleration_r(cal)
-    assert 0<r<.01 and np.isfinite(corr)
-    q,info=fit_acceleration_q(y[:500],dt,r)
-    out=run_acceleration_filter(y,dt,r,q)
-    assert np.isfinite(out['estimated_acc_ms2']).all()
-    assert np.isfinite(out['nis']).all()
-    assert len(out['estimated_acc_ms2'])==len(y)
+    root = Path(__file__).resolve().parents[1]
+    stationary = pd.read_csv(root / "examples" / "akus_stationary_REAL.csv")
+    motion = pd.read_csv(root / "examples" / "akus_movement_REAL.csv")
+    st, dt = _decimate(stationary, 0.01)
+    mo, dt2 = _decimate(motion, 0.01)
+    assert dt == pytest.approx(0.01, abs=0.001) and dt2 == pytest.approx(0.01, abs=0.001)
+    baseline = stationary.fAccZUnfiltered.median()
+    cal = (st.fAccZUnfiltered.to_numpy() - baseline) * 9.80665
+    y = (mo.fAccZUnfiltered.to_numpy() - baseline) * 9.80665
+    r, corr = estimate_acceleration_r(cal)
+    assert 0 < r < 0.01 and np.isfinite(corr)
+    q, info = fit_acceleration_q(y[:500], dt, r)
+    out = run_acceleration_filter(y, dt, r, q)
+    assert np.isfinite(out["estimated_acc_ms2"]).all()
+    assert np.isfinite(out["nis"]).all()
+    assert len(out["estimated_acc_ms2"]) == len(y)
+
+
+def test_twincat_channel_discovery_aliases():
+    df = pd.DataFrame({
+        "MAIN.time_ms": np.arange(60) * 10.0,
+        "MAIN.fPos1": np.zeros(60),
+        "MAIN.fPos2": np.zeros(60),
+        "MAIN.fVel1": np.zeros(60),
+        "MAIN.fVel2": np.zeros(60),
+        "MAIN.fTorque1": np.zeros(60),
+        "MAIN.fTorque2": np.zeros(60),
+        "MAIN.fAvg3702Z": np.ones(60),
+        "MAIN.fAccZ": np.ones(60) * 9.80665,
+    })
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
+    buf.seek(0)
+    parsed = load_twincat_csv(buf)
+    assert "fAccZUnfiltered" in parsed.columns
+    assert "fAvg3702Z" in parsed.columns
+    assert len(parsed) == 60
+
+
+def test_streamlit_app_compiles_cleanly():
+    root = Path(__file__).resolve().parents[1]
+    py_compile.compile(str(root / "app.py"), doraise=True)
+    py_compile.compile(str(root / "desktop_app.py"), doraise=True)

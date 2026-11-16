@@ -1,0 +1,50 @@
+{
+  "plant": "jan_euler",
+  "metrics": {
+    "mean_nis": 0.969975334837808,
+    "nis_95pct_interval_1d": [
+      0.9111625616165688,
+      1.092910584089886
+    ],
+    "innovation_mean_ms2": 0.001346874786065928,
+    "innovation_std_ms2": 0.04225511014299892,
+    "innovation_lag1": -0.02055668621416125,
+    "n_validation_samples": 930,
+    "kalman_acc_rmse_ms2": 0.013063523921146191,
+    "kalman_acc_mae_ms2": 0.010391066817595765,
+    "mean_nees": 0.9441551111341004,
+    "nees_95pct_interval_1d": [
+      0.9111625616165688,
+      1.092910584089886
+    ],
+    "acc_95pct_coverage": 0.956989247311828,
+    "raw_acc_rmse_ms2": 0.04012664400458603,
+    "raw_acc_mae_ms2": 0.031754701171512446,
+    "r_injected": 0.0016,
+    "r_estimated": 0.0016374580632037563,
+    "r_relative_error": 0.02341128950234764,
+    "q_injected": 0.001,
+    "q_estimated": 0.0022426225157063714,
+    "q_ratio": 2.2426225157063713,
+    "Q_step_injected": 1e-05,
+    "Q_step_estimated": 2.2426225157063714e-05,
+    "backend_max_abs_diff": 2.7755575615628914e-17
+  },
+  "interpretation": [
+    "R recovery: Estimated R (1.6375e-03 (m/s\u00b2)\u00b2) closely matches injected R (1.6000e-03 (m/s\u00b2)\u00b2), relative error = +2.3%.",
+    "Accuracy improvement: Held-out RMSE improved by 67.4% (Raw 0.0401 m/s\u00b2 \u2192 Kalman 0.0131 m/s\u00b2; MAE 0.0318 \u2192 0.0104 m/s\u00b2).",
+    "1D Innovation Consistency: Held-out mean NIS = 0.970 lies within the 95% chi\u00b2(1) interval [0.911, 1.093] (expected mean \u2248 1.0).",
+    "Nonlinear Friction Mismatch Detected: Because the Jan nonlinear Euler plant includes Coulomb/position friction deadzones omitted from the linear force prior, the maximum-likelihood optimizer inflates Q (q_est / q_true = 2.24\u00d7) to absorb deterministic friction errors."
+  ],
+  "fit_info": {
+    "converged": true,
+    "near_bound": false,
+    "objective": -3294.437946464861,
+    "bounds": [
+      1e-10,
+      10.0
+    ],
+    "method": "mle",
+    "note": "Q here is scalar acceleration-residual Q_step=q*dt, NOT Jan position/velocity Q matrix"
+  }
+}

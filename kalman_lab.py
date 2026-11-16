@@ -12,6 +12,29 @@ from akus_sim import ControlConfig, GRAVITY
 
 REAL_CHANNELS = ('fPos1', 'fPos2', 'fVel1', 'fVel2', 'fTorque1', 'fTorque2',
                  'fAccZUnfiltered', 'fAccZ')
+OPTIONAL_ACC_CHANNELS = ('fAccZg', 'fAvg3702Z')
+
+
+def _discover_channel_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Robust channel discovery for TwinCAT Scope CSV exports.
+
+    Handles exact names as well as ADS symbol path prefixes (e.g., 'MAIN.fAccZUnfiltered')
+    and preserves optional accelerometer channels (`fAccZg`, `fAvg3702Z`) when present.
+    """
+    rename_map = {}
+    target_names = ('time_s', 'time_ms') + REAL_CHANNELS + OPTIONAL_ACC_CHANNELS
+    existing = set(df.columns)
+    for target in target_names:
+        if target in existing:
+            continue
+        for col in df.columns:
+            clean = str(col).strip()
+            if clean.endswith('.' + target) or clean.lower() == target.lower():
+                rename_map[col] = target
+                break
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    return df
 
 
 def load_twincat_csv(source):
@@ -30,6 +53,8 @@ def load_twincat_csv(source):
     else:
         head = source.read(120)
         source.seek(0)
+    if isinstance(head, str):
+        head = head.encode('utf-8', errors='ignore')
     twin = head.startswith(b'Name;') and b'\nFile;' in head
     if twin:
         # 0-5: export metadata, 6: channel header, 7-12: channel metadata
@@ -42,16 +67,25 @@ def load_twincat_csv(source):
         df['time_s'] = pd.to_numeric(df['time_ms'], errors='coerce') / 1000.0
     else:
         df = pd.read_csv(source, sep=None, engine='python')
+        df = _discover_channel_columns(df)
         if 'time_s' not in df.columns:
             if 'time_ms' in df.columns:
                 df['time_s'] = pd.to_numeric(df['time_ms'], errors='coerce') / 1000.0
             else:
                 raise ValueError('CSV needs TwinCAT Scope header or time_s/time_ms')
+    df = _discover_channel_columns(df)
+    # Fallback: if fAccZUnfiltered is absent but fAvg3702Z or fAccZg is present
+    if 'fAccZUnfiltered' not in df.columns:
+        if 'fAvg3702Z' in df.columns:
+            df['fAccZUnfiltered'] = df['fAvg3702Z']
+        elif 'fAccZg' in df.columns:
+            df['fAccZUnfiltered'] = df['fAccZg']
     needed = ('time_s',) + REAL_CHANNELS
     missing = [k for k in needed if k not in df.columns]
     if missing:
         raise ValueError('Missing required CSV channels: ' + ', '.join(missing))
-    cols = ['time_s', *REAL_CHANNELS]
+    extra = [c for c in OPTIONAL_ACC_CHANNELS if c in df.columns]
+    cols = ['time_s', *REAL_CHANNELS, *extra]
     # Original file has duplicate fTorque1/fTorque2 columns: pandas appends '.1';
     # first originals are already in Nm per FeedbackControl source.
     result = df[cols].copy()

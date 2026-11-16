@@ -538,14 +538,27 @@
           </div>
           <div id="bm9Metrics" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5"></div>
           <canvas id="bm9Canvas" width="980" height="320" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
+          <div class="bg-[var(--background)] border border-[var(--border)] rounded-xl p-3 text-xs space-y-2">
+            <div class="font-bold text-sky-400">Historical Reference Comparison (Previous Two-State Position/Velocity Benchmark, dim=2)</div>
+            <table class="w-full text-left font-mono text-xs border-collapse">
+              <thead><tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]"><th class="py-1">Metric</th><th class="py-1">Matched linear</th><th class="py-1">Jan nonlinear</th></tr></thead>
+              <tbody class="divide-y divide-[var(--border)]">
+                <tr><td class="py-1">Injected process intensity qₐ [m²/s³]</td><td class="py-1">1.00e-4</td><td class="py-1">1.00e-4</td></tr>
+                <tr><td class="py-1">Identified process intensity qₐ [m²/s³]</td><td class="py-1 text-emerald-400">6.70e-5</td><td class="py-1 text-amber-400">5.13e-4</td></tr>
+                <tr><td class="py-1">Held-out mean NIS (2D, expected ≈ 2.0)</td><td class="py-1 text-emerald-400">2.107</td><td class="py-1 text-amber-400">3.648</td></tr>
+                <tr><td class="py-1">Nonlinear raw → filtered position RMSE</td><td class="py-1">—</td><td class="py-1">0.351 mm → 0.274 mm</td></tr>
+              </tbody>
+            </table>
+            <p class="text-[var(--muted-foreground)]">Note: Under Jan nonlinear friction, the inflated Q (5.13e-4) reflects unmodeled Coulomb/position friction mismatch in the linear estimator, not increased physical disturbance noise.</p>
+          </div>
         </div>
 
         <!-- TAB 10: ACCELERATION KF (v4) -->
         <div id="tab10" class="tab-pane hidden space-y-4">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h3 class="text-sm font-bold">Acceleration KF (v4) · Simulated truth &amp; real Earth-hardware replay</h3>
-              <p class="text-xs text-[var(--muted-foreground)]">1-state acceleration-residual Kalman filter: Q_step = q × dt, R from stationary acceleration noise, S and K updated every sample.</p>
+              <h3 class="text-sm font-bold">Acceleration KF (v4) · Simulated Truth, Q/R Identification Benchmark &amp; Real Earth-Hardware Replay</h3>
+              <p class="text-xs text-[var(--muted-foreground)]">1-state acceleration-residual Kalman filter (dim=1, nominal NIS/NEES ≈ 1.0): Q_step = q × dt, R from stationary/residual noise, S and K updated every sample.</p>
             </div>
             <div class="flex gap-2">
               <button onclick="exportAccKfCSV()" class="bg-sky-600 hover:bg-sky-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold">Download Accel CSV</button>
@@ -555,32 +568,39 @@
 
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3 bg-[var(--background)] border border-[var(--border)] rounded-xl p-3">
             <div class="space-y-2">
-              <label class="block text-xs font-semibold">Acceleration dataset</label>
+              <label class="block text-xs font-semibold" title="Select synthetic Jan physics (known truth) or real Earth TwinCAT Scope recording (+1g baseline)">Acceleration dataset</label>
               <select id="acc10Source" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
                 <option value="syn_linear">Synthetic · Jan linear physics</option>
                 <option value="syn_nonlinear">Synthetic · Jan nonlinear Euler physics</option>
                 <option value="real_bundled">Real Earth hardware · included Scope excerpt</option>
               </select>
-              <label class="block text-xs font-semibold">Analysis sample period [ms]</label>
-              <select id="acc10DtMs" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
-                <option value="0.5">0.5 ms (2 kHz raw)</option>
-                <option value="2">2 ms</option>
-                <option value="5">5 ms</option>
-                <option value="10" selected>10 ms</option>
-                <option value="20">20 ms</option>
-                <option value="50">50 ms</option>
-              </select>
+              <label class="block text-xs font-semibold" title="Filter sample interval in milliseconds">Analysis sample period [ms] &amp; Unit</label>
+              <div class="grid grid-cols-2 gap-2">
+                <select id="acc10DtMs" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs">
+                  <option value="0.5">0.5 ms (2 kHz)</option>
+                  <option value="2">2 ms</option>
+                  <option value="5">5 ms</option>
+                  <option value="10" selected>10 ms</option>
+                  <option value="20">20 ms</option>
+                  <option value="50">50 ms</option>
+                </select>
+                <select id="acc10Unit" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs">
+                  <option value="ms2" selected>Unit: m/s²</option>
+                  <option value="g">Unit: g</option>
+                </select>
+              </div>
             </div>
             <div class="space-y-2">
-              <label class="block text-xs font-semibold">Acceleration prediction prior</label>
+              <label class="block text-xs font-semibold" title="Random-walk baseline (a_prior=0) or Jan linear physics force prediction">Acceleration prediction prior</label>
               <select id="acc10Prior" class="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs">
                 <option value="rw">Measured acceleration only (random-walk model)</option>
-                <option value="jan">Jan linear physics force prediction (experimental)</option>
+                <option value="jan">Jan linear physics force prediction (model-informed)</option>
               </select>
-              <label class="block text-xs font-semibold">Synthetic sensor noise SD [m/s²] / Samples</label>
-              <div class="grid grid-cols-2 gap-2">
-                <input id="acc10Sd" type="number" step="0.005" value="0.04" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
-                <input id="acc10Samples" type="number" step="50" min="200" max="3000" value="950" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
+              <label class="block text-xs font-semibold" title="Injected sensor noise SD [m/s²], injected process q [(m/s²)²/s], and sample count">Noise SD [m/s²] / Injected q / Samples</label>
+              <div class="grid grid-cols-3 gap-1.5">
+                <input id="acc10Sd" type="number" step="0.005" value="0.04" title="Injected sensor noise SD [m/s²]" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
+                <input id="acc10TrueQ" type="number" step="0.0005" value="0.001" title="Injected process spectral density q_true [(m/s²)²/s]" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
+                <input id="acc10Samples" type="number" step="50" min="200" max="3000" value="950" title="Samples per synthetic sequence" class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs" />
               </div>
             </div>
             <div class="space-y-2 flex flex-col justify-between">
@@ -588,13 +608,18 @@
                 <input id="acc10FitQ" type="checkbox" checked class="accent-sky-500" />
                 <span>Identify acceleration Q on training interval</span>
               </label>
-              <div id="acc10StatusNote" class="text-xs text-[var(--muted-foreground)]">Select dataset and click Estimate R / Q.</div>
-              <button onclick="runAccelerationKfTab10()" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-3 rounded-lg text-xs transition">▶ Estimate R / Q and filter acceleration</button>
+              <div id="acc10StatusNote" class="text-xs text-[var(--muted-foreground)]">Select dataset and run estimation or benchmark.</div>
+              <div class="grid grid-cols-1 gap-1.5">
+                <button onclick="runAccelerationKfTab10(false)" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-1.5 px-3 rounded-lg text-xs transition">▶ Estimate R / Q and filter acceleration</button>
+                <button onclick="runAccelerationKfTab10(true)" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 px-3 rounded-lg text-xs transition">⚡ Run Acceleration Q/R Identification Benchmark</button>
+              </div>
             </div>
           </div>
 
           <div id="acc10Metrics" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5"></div>
-          <canvas id="acc10Canvas" width="980" height="360" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
+          <div id="acc10Interp" class="hidden bg-[var(--background)] border border-[var(--border)] rounded-xl p-3 text-xs space-y-1"></div>
+          <canvas id="acc10Canvas" width="980" height="330" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
+          <canvas id="acc10KsCanvas" width="980" height="220" class="w-full bg-[#101b2a] border border-[var(--border)] rounded-xl"></canvas>
         </div>
 
       </div>
@@ -1595,7 +1620,7 @@
       ctx.textAlign = 'left';
       ctx.fillText(title, padL, 20);
 
-      let lx = padL + 280;
+      let lx = Math.max(padL + ctx.measureText(title).width + 24, W - 380);
       traces.forEach(tr => {
         ctx.fillStyle = tr.color;
         ctx.fillRect(lx, 11, 12, 8);
@@ -1758,32 +1783,56 @@
       }
     }
 
-    async function runAccelerationKfTab10() {
+    async function runAccelerationKfTab10(isBenchmark = false) {
       try {
-        const src = document.getElementById('acc10Source').value;
+        let src = document.getElementById('acc10Source').value;
+        if (isBenchmark && !src.startsWith('syn_')) {
+          src = 'syn_linear';
+          document.getElementById('acc10Source').value = 'syn_linear';
+        }
         const dtTarget = (parseFloat(document.getElementById('acc10DtMs').value) || 10) / 1000.0;
+        const unitMode = document.getElementById('acc10Unit').value;
         const priorMode = document.getElementById('acc10Prior').value;
         const sdAcc = parseFloat(document.getElementById('acc10Sd').value) || 0.04;
+        const qTrue = parseFloat(document.getElementById('acc10TrueQ').value) || 0.001;
         const N = parseInt(document.getElementById('acc10Samples').value, 10) || 950;
         const fitQ = document.getElementById('acc10FitQ').checked;
         const p = getModelParams();
 
-        let tHold, aTrain, aHold, rAcc, priorTrain = null, priorHold = null, truthAcc = null, tcFiltered = null, actualDt = dtTarget, note = '';
+        let tHold, aTrain, aHold, rAcc, rInjected = null, priorTrain = null, priorHold = null, truthAcc = null, tcFiltered = null, actualDt = dtTarget, note = '';
 
         if (src.startsWith('syn_')) {
           const plant = src === 'syn_linear' ? 'linear' : 'jan_euler';
-          const train = generateJanSynthetic(dtTarget, N, p, plant, 42, 'training', 0.00035, sdAcc, 0.00004);
-          const hold = generateJanSynthetic(dtTarget, N, p, plant, 42 + 7919, 'validation', 0.00035, sdAcc, 0.00004);
-          rAcc = sdAcc * sdAcc;
-          aTrain = train.y.map(r => r[1]);
-          aHold = hold.y.map(r => r[1]);
+          const train = generateJanSynthetic(dtTarget, N, p, plant, 42, 'training', 0.00035, sdAcc, 1e-6);
+          const hold = generateJanSynthetic(dtTarget, N, p, plant, 42 + 7919, 'validation', 0.00035, sdAcc, 1e-6);
+          const rngT = mulberry32(1042), rngV = mulberry32(9042);
+          let dT = 0, dV = 0;
+          const qStepTrue = qTrue * dtTarget;
+          const aTruthTrain = new Array(N), aTruthVal = new Array(N);
+          yTrainArr = new Array(N); aHold = new Array(N);
+          const calRes = new Array(N);
+          for (let k = 0; k < N; k++) {
+            dT += Math.sqrt(qStepTrue) * randn(rngT);
+            dV += Math.sqrt(qStepTrue) * randn(rngV);
+            aTruthTrain[k] = train.accTruth[k] + dT;
+            aTruthVal[k] = hold.accTruth[k] + dV;
+            const nT = sdAcc * randn(rngT);
+            const nV = sdAcc * randn(rngV);
+            yTrainArr[k] = aTruthTrain[k] + nT;
+            aHold[k] = aTruthVal[k] + nV;
+            calRes[k] = yTrainArr[k] - aTruthTrain[k];
+          }
+          rInjected = sdAcc * sdAcc;
+          const calMean = calRes.reduce((a, b) => a + b, 0) / N;
+          rAcc = calRes.reduce((s, v) => s + (v - calMean) ** 2, 0) / (N - 1);
+          aTrain = yTrainArr;
           tHold = hold.t;
-          truthAcc = hold.accTruth;
+          truthAcc = aTruthVal;
           if (priorMode === 'jan') {
             priorTrain = train.u.map(uk => uk / p.effective_mass);
             priorHold = hold.u.map(uk => uk / p.effective_mass);
           }
-          note = `Synthetic (${plant}) · Independent training/validation seeds`;
+          note = `Synthetic (${plant}) · Independent train (seed=42) & held-out validation (seed=7961)`;
         } else {
           document.getElementById('acc10StatusNote').textContent = 'Loading real Earth-hardware CSVs from repository...';
           const { motion, stationary } = await loadBundledRealCSVs();
@@ -1799,41 +1848,76 @@
           tcFiltered = decM.rows.map(r => r.fAccZ - tcBase);
           const cut = Math.floor(aHold.length * 0.55);
           aTrain = aHold.slice(0, cut);
-          note = 'Real Earth hardware (Nov 5, 2026) · Stationary +1g subtracted';
+          note = `Real Earth hardware (Nov 5, 2026) · Stationary baseline ${g0.toFixed(6)} g subtracted`;
         }
 
-        const qAcc = fitQ ? fitAccelerationQ(aTrain, actualDt, rAcc, priorTrain) : 1e-4;
+        const qAcc = fitQ ? fitAccelerationQ(aTrain, actualDt, rAcc, priorTrain) : qTrue;
         const res = runAccelerationFilter(aHold, actualDt, rAcc, qAcc, priorHold);
         const lastK = res.K[res.K.length - 1];
+        const burn = 20;
+        const validNis = res.nis.slice(burn);
+        const meanNis = validNis.reduce((a, b) => a + b, 0) / validNis.length;
 
-        let rmseTxt = '';
+        let rmseRaw = null, rmseKf = null, maeRaw = null, maeKf = null, meanNees = null;
+        const interpLines = [];
         if (truthAcc) {
-          let sqRaw = 0, sqKf = 0;
-          for (let i = 0; i < aHold.length; i++) {
-            sqRaw += Math.pow(aHold[i] - truthAcc[i], 2);
-            sqKf += Math.pow(res.estimated[i] - truthAcc[i], 2);
+          let sqRaw = 0, sqKf = 0, absRaw = 0, absKf = 0, neesSum = 0, cnt = 0;
+          for (let i = burn; i < aHold.length; i++) {
+            const eRaw = aHold[i] - truthAcc[i];
+            const eKf = res.estimated[i] - truthAcc[i];
+            sqRaw += eRaw * eRaw; sqKf += eKf * eKf;
+            absRaw += Math.abs(eRaw); absKf += Math.abs(eKf);
+            const pStep = Math.max(1e-18, (1 - res.K[i]) * res.S[i] * res.K[i]);
+            neesSum += (eKf * eKf) / pStep;
+            cnt++;
           }
-          rmseTxt = ` · RMSE: Raw ${Math.sqrt(sqRaw / aHold.length).toFixed(4)} → KF ${Math.sqrt(sqKf / aHold.length).toFixed(4)} m/s²`;
+          rmseRaw = Math.sqrt(sqRaw / cnt);
+          rmseKf = Math.sqrt(sqKf / cnt);
+          maeRaw = absRaw / cnt;
+          maeKf = absKf / cnt;
+          meanNees = neesSum / cnt;
+          const rRelErr = ((rAcc - rInjected) / rInjected) * 100;
+          const impPct = (1 - rmseKf / rmseRaw) * 100;
+          interpLines.push(`• R Recovery: Injected R = ${rInjected.toExponential(3)} vs. Estimated R = ${rAcc.toExponential(3)} [(m/s²)²] (Relative error: ${rRelErr >= 0 ? '+' : ''}${rRelErr.toFixed(1)}%).`);
+          interpLines.push(`• Q Recovery: Injected q = ${qTrue.toExponential(3)} vs. Identified q = ${qAcc.toExponential(3)} [(m/s²)²/s] (Q_step = ${res.Q_step.toExponential(3)}).`);
+          interpLines.push(`• Held-Out Accuracy: RMSE improved by ${impPct.toFixed(1)}% (Raw ${rmseRaw.toFixed(4)} → Kalman ${rmseKf.toFixed(4)} m/s²; MAE ${maeRaw.toFixed(4)} → ${maeKf.toFixed(4)} m/s²).`);
+          interpLines.push(`• 1D Consistency (df=1, expected ≈ 1.0): Mean NIS = ${meanNis.toFixed(3)}, Mean NEES = ${meanNees.toFixed(3)}.`);
+        } else {
+          interpLines.push(`• Real Earth Stationary R: ${rAcc.toExponential(4)} [(m/s²)²] (SD = ${Math.sqrt(rAcc).toFixed(5)} m/s²).`);
+          interpLines.push(`• Dynamic Segment Q: Fitted q = ${qAcc.toExponential(4)} [(m/s²)²/s], Q_step = ${res.Q_step.toExponential(4)}, 1D Mean NIS = ${meanNis.toFixed(3)}.`);
+          interpLines.push(`• Caveat: TwinCAT 10 Hz low-pass (fAccZ) is shown for comparison only and is NOT ground truth.`);
         }
-        document.getElementById('acc10StatusNote').textContent = note + rmseTxt;
 
-        document.getElementById('acc10Metrics').innerHTML = [
-          ['Acceleration R [(m/s²)²]', rAcc.toExponential(4)],
-          ['Identified q [(m/s²)²/s]', qAcc.toExponential(4)],
-          ['Q per sample [(m/s²)²]', res.Q_step.toExponential(4)],
-          ['Last Kalman gain K', lastK.toFixed(4)]
-        ].map(([k, v]) => `<div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5"><div class="text-xs text-[var(--muted-foreground)]">${k}</div><div class="text-sm font-bold text-sky-400 mt-0.5">${v}</div></div>`).join('');
+        document.getElementById('acc10StatusNote').textContent = note;
+        const interpEl = document.getElementById('acc10Interp');
+        interpEl.classList.remove('hidden');
+        interpEl.innerHTML = `<div class="font-bold text-sky-400 mb-1">Automated Engineering Interpretation</div>` + interpLines.map(l => `<div>${l}</div>`).join('');
 
-        const traces = [
-          { label: 'Raw Accelerometer [m/s²]', color: '#ffbb66', values: aHold, width: 1.0 },
-          { label: 'Kalman Acceleration [m/s²]', color: '#5ac8fa', values: res.estimated, width: 2.0 }
+        const cards = [
+          ['Estimated R [(m/s²)²]', rInjected ? `${rAcc.toExponential(3)} (Inj: ${rInjected.toExponential(2)})` : rAcc.toExponential(4)],
+          ['Identified q [(m/s²)²/s]', truthAcc ? `${qAcc.toExponential(3)} (Inj: ${qTrue.toExponential(2)})` : qAcc.toExponential(4)],
+          ['Q_step / Steady K', `${res.Q_step.toExponential(3)} / K=${lastK.toFixed(3)}`],
+          ['1D Mean NIS (exp ≈ 1.0)', truthAcc ? `NIS ${meanNis.toFixed(3)} | RMSE ${rmseKf.toFixed(4)}` : meanNis.toFixed(3)]
         ];
-        if (truthAcc) traces.push({ label: 'Synthetic Ground Truth', color: '#7ce3ab', values: truthAcc, width: 1.6 });
-        if (tcFiltered) traces.push({ label: 'TwinCAT 10 Hz Low-Pass', color: '#db9bff', values: tcFiltered, width: 1.4 });
-        drawMultiTracePlot('acc10Canvas', 'Dynamic Acceleration: Raw Sensor vs. 1-State Kalman Filter [m/s²]', tHold, traces);
+        document.getElementById('acc10Metrics').innerHTML = cards.map(([k, v]) => `<div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5"><div class="text-xs text-[var(--muted-foreground)]">${k}</div><div class="text-sm font-bold text-sky-400 mt-0.5">${v}</div></div>`).join('');
+
+        const scale = unitMode === 'g' ? (1.0 / GRAVITY) : 1.0;
+        const uLbl = unitMode === 'g' ? 'g' : 'm/s²';
+        const traces = [
+          { label: `Raw Sensor [${uLbl}]`, color: '#ffbb66', values: aHold.map(v => v * scale), width: 1.0 },
+          { label: `Kalman Est [${uLbl}]`, color: '#5ac8fa', values: res.estimated.map(v => v * scale), width: 2.0 }
+        ];
+        if (truthAcc) traces.push({ label: `True Accel [${uLbl}]`, color: '#7ce3ab', values: truthAcc.map(v => v * scale), width: 1.6 });
+        if (tcFiltered) traces.push({ label: `TwinCAT Filtered [${uLbl}]`, color: '#db9bff', values: tcFiltered.map(v => v * scale), width: 1.4 });
+        drawMultiTracePlot('acc10Canvas', `Dynamic Acceleration: Raw Sensor vs. 1-State Kalman Filter [${uLbl}]`, tHold, traces);
+
+        drawMultiTracePlot('acc10KsCanvas', 'Kalman Gain K(t), Innovation Covariance S(t), and 1D NIS(t) (expected mean ≈ 1.0)', tHold, [
+          { label: 'Gain K [-]', color: '#5ac8fa', values: res.K, width: 1.8 },
+          { label: '1D NIS [-]', color: '#7ce3ab', values: res.nis.map(v => Math.min(v, 6.0)), width: 1.1 }
+        ]);
 
         lastAccKfReport = { t: tHold, measured: aHold, kalman: res.estimated, K: res.K, S: res.S, nis: res.nis, R: rAcc, q: qAcc, Q_step: res.Q_step, note };
-        setBanner('Completed v4 1-state Acceleration Kalman Filter estimation.', false);
+        setBanner(isBenchmark ? 'Completed Acceleration Q/R Identification Benchmark.' : 'Completed v4 1-state Acceleration Kalman Filter estimation.', false);
       } catch (err) {
         setBanner(`⚠ Acceleration KF: ${err.message}`, true);
       }

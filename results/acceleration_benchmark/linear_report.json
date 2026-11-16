@@ -1,0 +1,49 @@
+{
+  "plant": "linear",
+  "metrics": {
+    "mean_nis": 0.9907578288179623,
+    "nis_95pct_interval_1d": [
+      0.9111625616165688,
+      1.092910584089886
+    ],
+    "innovation_mean_ms2": 0.0011899818289546487,
+    "innovation_std_ms2": 0.041700058893849756,
+    "innovation_lag1": -0.002148379372267817,
+    "n_validation_samples": 930,
+    "kalman_acc_rmse_ms2": 0.012145941104612559,
+    "kalman_acc_mae_ms2": 0.00998361156034271,
+    "mean_nees": 1.3498330828303349,
+    "nees_95pct_interval_1d": [
+      0.9111625616165688,
+      1.092910584089886
+    ],
+    "acc_95pct_coverage": 0.9150537634408602,
+    "raw_acc_rmse_ms2": 0.04012664400458603,
+    "raw_acc_mae_ms2": 0.031754701171512446,
+    "r_injected": 0.0016,
+    "r_estimated": 0.0016374580632037565,
+    "r_relative_error": 0.023411289502347776,
+    "q_injected": 0.001,
+    "q_estimated": 0.0007810806466564662,
+    "q_ratio": 0.7810806466564661,
+    "Q_step_injected": 1e-05,
+    "Q_step_estimated": 7.810806466564663e-06,
+    "backend_max_abs_diff": 5.551115123125783e-17
+  },
+  "interpretation": [
+    "R recovery: Estimated R (1.6375e-03 (m/s\u00b2)\u00b2) closely matches injected R (1.6000e-03 (m/s\u00b2)\u00b2), relative error = +2.3%.",
+    "Accuracy improvement: Held-out RMSE improved by 69.7% (Raw 0.0401 m/s\u00b2 \u2192 Kalman 0.0121 m/s\u00b2; MAE 0.0318 \u2192 0.0100 m/s\u00b2).",
+    "1D Innovation Consistency: Held-out mean NIS = 0.991 lies within the 95% chi\u00b2(1) interval [0.911, 1.093] (expected mean \u2248 1.0)."
+  ],
+  "fit_info": {
+    "converged": true,
+    "near_bound": false,
+    "objective": -3324.372774055302,
+    "bounds": [
+      1e-10,
+      10.0
+    ],
+    "method": "mle",
+    "note": "Q here is scalar acceleration-residual Q_step=q*dt, NOT Jan position/velocity Q matrix"
+  }
+}
