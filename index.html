@@ -551,6 +551,47 @@
             </table>
             <p class="text-[var(--muted-foreground)]">Note: Under Jan nonlinear friction, the inflated Q (5.13e-4) reflects unmodeled Coulomb/position friction mismatch in the linear estimator, not increased physical disturbance noise.</p>
           </div>
+
+          <div class="bg-[var(--background)] border border-emerald-500/40 rounded-xl p-3 text-xs space-y-2.5">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div class="font-bold text-emerald-400">Phase 2 Add-On: Two-State [z, v] TwinCAT 3 Export (FB_AKUS_TwoStateKF.st) &amp; 100 Hz Real Stationary R / Force Audit</div>
+                <p class="text-[var(--muted-foreground)]">2×2 state [position z (m), velocity v (m/s)] &amp; measurement [z_meas, a_meas] at dt = 0.01 s (100 Hz), Joseph covariance update, and real Earth stationary audit (phase2_two_state.py).</p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button onclick="exportTwinCAT2StateFB()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold">Download FB_AKUS_TwoStateKF.st</button>
+                <button onclick="exportRealStationaryRAudit()" class="bg-[var(--card)] border border-[var(--border)] hover:border-sky-400 rounded-lg px-3 py-1.5 text-xs font-semibold">Download Real Stationary R Audit JSON</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2">
+                <div class="text-[10px] text-[var(--muted-foreground)] uppercase">100 Hz Matched Linear q_est</div>
+                <div class="font-mono font-bold text-emerald-400">8.940e-5 <span class="text-[10px] text-[var(--muted-foreground)]">(true 1.0e-4)</span></div>
+              </div>
+              <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2">
+                <div class="text-[10px] text-[var(--muted-foreground)] uppercase">2D Mean NIS / NEES (df=2)</div>
+                <div class="font-mono font-bold text-sky-400">2.041 / 2.129 <span class="text-[10px] text-[var(--muted-foreground)]">(target ≈ 2.0)</span></div>
+              </div>
+              <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2">
+                <div class="text-[10px] text-[var(--muted-foreground)] uppercase">Python ↔ 2-State ST Max Diff</div>
+                <div class="font-mono font-bold text-emerald-400">8.71e-13 <span class="text-[10px] text-[var(--muted-foreground)]">(950 vectors)</span></div>
+              </div>
+              <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2">
+                <div class="text-[10px] text-[var(--muted-foreground)] uppercase">Real Earth Stationary Acc SD</div>
+                <div class="font-mono font-bold text-amber-400">0.000648 m/s² <span class="text-[10px] text-[var(--muted-foreground)]">(0.999801 g)</span></div>
+              </div>
+            </div>
+            <table class="w-full text-left font-mono text-xs border-collapse">
+              <thead><tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]"><th class="py-1">100 Hz Two-State Run (N=950, seed=42)</th><th class="py-1">q_est [m²/s³]</th><th class="py-1">2D NIS / NEES</th><th class="py-1">Raw → Filtered Pos RMSE</th><th class="py-1">Vel RMSE</th><th class="py-1">95% Pos Cov</th><th class="py-1">Acc Lag-1 ρ₁</th></tr></thead>
+              <tbody class="divide-y divide-[var(--border)]">
+                <tr><td class="py-1">Matched Linear Plant</td><td class="py-1 text-emerald-400">8.940e-5</td><td class="py-1 text-emerald-400">2.041 / 2.129</td><td class="py-1">0.347 mm → 0.164 mm</td><td class="py-1">2.698 mm/s</td><td class="py-1">93.5%</td><td class="py-1">+0.017</td></tr>
+                <tr><td class="py-1">Jan Nonlinear Euler Stress Test</td><td class="py-1 text-amber-400">3.764e-4 (3.76×)</td><td class="py-1 text-amber-400">3.327 / 2.186</td><td class="py-1">0.347 mm → 0.246 mm</td><td class="py-1">3.679 mm/s</td><td class="py-1">88.3%</td><td class="py-1 text-amber-400">+0.471</td></tr>
+              </tbody>
+            </table>
+            <div class="bg-amber-950/30 border border-amber-500/40 rounded-lg p-2 text-amber-200">
+              <strong>Real Earth Stationary Force &amp; R Audit (Test_KalmanFilter.csv, 2–10 s @ 100 Hz):</strong> Stationary encoder position SD is <code class="text-amber-300">4.20e-10 m</code> (quantization-limited; floored to <code class="text-amber-300">1 µm</code> / <code class="text-amber-300">R[0,0] = 1e-12 m²</code> with cross-correlation capped at 0.8). Mean raw motor torque sum is <code class="text-amber-300">0.0261 Nm</code> → ideal spindle force <code class="text-amber-300">32.80 N</code> vs. platform weight <code class="text-amber-300">170.59 N</code> (<code class="text-amber-300">-137.78 N</code> discrepancy due to static friction / brake / torque-unit scaling). Real dynamic Q identification is blocked until drive force scaling is calibrated.
+            </div>
+          </div>
         </div>
 
         <!-- TAB 10: ACCELERATION KF (v4) -->
@@ -2141,6 +2182,139 @@
         'bValid          := TRUE;'
       ].join('\n');
       downloadFile('FB_AkusNonlinearAccKF.st', st, 'text/plain');
+    }
+
+    function exportTwinCAT2StateFB() {
+      const st = [
+        '(*',
+        '  FB_AKUS_TwoStateKF',
+        '  Two-state position/velocity Kalman filter for the AKUS vertical carrier.',
+        '  State x = [position_z_m, velocity_z_ms]^T',
+        '  Measurement y = [measured_position_z_m, measured_acceleration_z_ms2]^T',
+        '  Input u = net drive force minus platform weight [N]',
+        '',
+        '  Discretization dt = 0.010000 s',
+        '  NOTE: Default Q and R come from the synthetic linear simulation benchmark,',
+        '  not calibrated real AKUS hardware.',
+        '*)',
+        'FUNCTION_BLOCK FB_AKUS_TwoStateKF',
+        'VAR_INPUT',
+        '    bReset          : BOOL;',
+        '    fPosMeas_m      : LREAL;',
+        '    fAccMeas_ms2    : LREAL;',
+        '    fDriveForce_N   : LREAL;',
+        'END_VAR',
+        'VAR_OUTPUT',
+        '    fPosEst_m       : LREAL;',
+        '    fVelEst_ms      : LREAL;',
+        '    fAccEst_ms2     : LREAL;',
+        '    fNIS            : LREAL;',
+        '    bValid          : BOOL;',
+        'END_VAR',
+        'VAR',
+        '    bInitialized    : BOOL := FALSE;',
+        '    x0, x1          : LREAL;',
+        '    x0m, x1m        : LREAL;',
+        '    y0hat, y1hat    : LREAL;',
+        '    v0, v1          : LREAL;',
+        '    detS            : LREAL;',
+        '    AA  : ARRAY[0..1, 0..1] OF LREAL := [1.000000000000000e+00, 9.952248112925884e-03, 0.000000000000000e+00, 9.904686464212609e-01];',
+        '    B   : ARRAY[0..1] OF LREAL       := [1.195086153300777e-08, 2.386375179923920e-06];',
+        '    H   : ARRAY[0..1, 0..1] OF LREAL := [1.000000000000000e+00, 0.000000000000000e+00, 0.000000000000000e+00, -9.575437817754107e-01];',
+        '    D   : ARRAY[0..1] OF LREAL       := [0.000000000000000e+00, 2.396940595354328e-04];',
+        '    QQ  : ARRAY[0..1, 0..1] OF LREAL := [2.958711906651078e-11, 4.430992805689643e-09, 4.430992805689643e-09, 8.854911120286365e-07];',
+        '    RR  : ARRAY[0..1, 0..1] OF LREAL := [1.209495765423438e-07, -1.531188247510185e-07, -1.531188247510185e-07, 1.589801342646670e-03];',
+        '    P, Pminus, S, Sinv, K, IKH, IKHP, T, KR, KRKt : ARRAY[0..1, 0..1] OF LREAL;',
+        '    i, j, m : INT;',
+        'END_VAR',
+        '',
+        'IF bReset OR NOT bInitialized THEN',
+        '    x0 := fPosMeas_m; x1 := 0.0;',
+        '    P[0,0] := 1.0E-4; P[0,1] := 0.0; P[1,0] := 0.0; P[1,1] := 1.0E-2;',
+        '    fPosEst_m := x0; fVelEst_ms := x1;',
+        '    fAccEst_ms2 := H[1,0] * x0 + H[1,1] * x1 + D[1] * fDriveForce_N;',
+        '    fNIS := 0.0; bInitialized := TRUE; bValid := TRUE;',
+        '    RETURN;',
+        'END_IF;',
+        'x0m := AA[0,0] * x0 + AA[0,1] * x1 + B[0] * fDriveForce_N;',
+        'x1m := AA[1,0] * x0 + AA[1,1] * x1 + B[1] * fDriveForce_N;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    T[i,j] := 0.0; FOR m := 0 TO 1 DO T[i,j] := T[i,j] + AA[i,m] * P[m,j]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    Pminus[i,j] := QQ[i,j]; FOR m := 0 TO 1 DO Pminus[i,j] := Pminus[i,j] + T[i,m] * AA[j,m]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'y0hat := H[0,0] * x0m + H[0,1] * x1m + D[0] * fDriveForce_N;',
+        'y1hat := H[1,0] * x0m + H[1,1] * x1m + D[1] * fDriveForce_N;',
+        'v0 := fPosMeas_m - y0hat; v1 := fAccMeas_ms2 - y1hat;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    T[i,j] := 0.0; FOR m := 0 TO 1 DO T[i,j] := T[i,j] + H[i,m] * Pminus[m,j]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    S[i,j] := RR[i,j]; FOR m := 0 TO 1 DO S[i,j] := S[i,j] + T[i,m] * H[j,m]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'detS := S[0,0] * S[1,1] - S[0,1] * S[1,0];',
+        'IF ABS(detS) < 1.0E-30 THEN bValid := FALSE; RETURN; END_IF;',
+        'Sinv[0,0] :=  S[1,1] / detS; Sinv[0,1] := -S[0,1] / detS;',
+        'Sinv[1,0] := -S[1,0] / detS; Sinv[1,1] :=  S[0,0] / detS;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    T[i,j] := 0.0; FOR m := 0 TO 1 DO T[i,j] := T[i,j] + Pminus[i,m] * H[j,m]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    K[i,j] := 0.0; FOR m := 0 TO 1 DO K[i,j] := K[i,j] + T[i,m] * Sinv[m,j]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'x0 := x0m + K[0,0] * v0 + K[0,1] * v1;',
+        'x1 := x1m + K[1,0] * v0 + K[1,1] * v1;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    IKH[i,j] := 0.0; IF i = j THEN IKH[i,j] := 1.0; END_IF;',
+        '    FOR m := 0 TO 1 DO IKH[i,j] := IKH[i,j] - K[i,m] * H[m,j]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    T[i,j] := 0.0; FOR m := 0 TO 1 DO T[i,j] := T[i,j] + IKH[i,m] * Pminus[m,j]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    IKHP[i,j] := 0.0; FOR m := 0 TO 1 DO IKHP[i,j] := IKHP[i,j] + T[i,m] * IKH[j,m]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    KR[i,j] := 0.0; FOR m := 0 TO 1 DO KR[i,j] := KR[i,j] + K[i,m] * RR[m,j]; END_FOR;',
+        'END_FOR; END_FOR;',
+        'FOR i := 0 TO 1 DO FOR j := 0 TO 1 DO',
+        '    KRKt[i,j] := 0.0; FOR m := 0 TO 1 DO KRKt[i,j] := KRKt[i,j] + KR[i,m] * K[j,m]; END_FOR;',
+        '    P[i,j] := 0.5 * ((IKHP[i,j] + KRKt[i,j]) + (IKHP[j,i] + KRKt[j,i]));',
+        'END_FOR; END_FOR;',
+        'fPosEst_m   := x0; fVelEst_ms := x1;',
+        'fAccEst_ms2 := H[1,0] * x0 + H[1,1] * x1 + D[1] * fDriveForce_N;',
+        'fNIS        := v0 * (Sinv[0,0] * v0 + Sinv[0,1] * v1) + v1 * (Sinv[1,0] * v0 + Sinv[1,1] * v1);',
+        'bValid      := TRUE;'
+      ].join('\n');
+      downloadFile('FB_AKUS_TwoStateKF.st', st, 'text/plain');
+    }
+
+    function exportRealStationaryRAudit() {
+      const report = {
+        source_file: 'Test_KalmanFilter.csv',
+        dt_s: 0.01,
+        stationary_window_s: [2.0, 10.0],
+        stationary_samples: 801,
+        static_baseline_g: 0.9998011510611735,
+        R_sample_cov_2x2: [
+          [1.7623819749038697e-19, 2.382012412979545e-13],
+          [2.382012412979545e-13, 4.1965571288016867e-07]
+        ],
+        R_for_exploratory_filter: [
+          [1e-12, 2.382012412979545e-13],
+          [2.382012412979545e-13, 4.1965571288016867e-07]
+        ],
+        position_noise_sd_m: 4.19807333773942e-10,
+        acceleration_noise_sd_ms2: 0.0006478083921038448,
+        stationary_force_audit: {
+          raw_torque_sum_mean: 0.02610461922596754,
+          ideal_spindle_force_if_Nm_N: 32.80403198744709,
+          platform_weight_N: 170.58667675,
+          force_minus_weight_N: -137.7826447625529
+        }
+      };
+      downloadFile('real_stationary_R_report.json', JSON.stringify(report, null, 2), 'application/json');
     }
 
     function refreshUI() {

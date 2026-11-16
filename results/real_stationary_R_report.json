@@ -1,0 +1,53 @@
+{
+  "provided": true,
+  "source": "Test_KalmanFilter.csv, real Earth hardware",
+  "stationary": {
+    "dt": 0.009999999999994458,
+    "R_empirical": [
+      [
+        1.762582048493211e-19,
+        -2.1657650767362704e-15
+      ],
+      [
+        -2.1657650767362704e-15,
+        4.1967905747781195e-07
+      ]
+    ],
+    "R_for_exploratory_filter": [
+      [
+        1e-12,
+        -2.1657650767362704e-15
+      ],
+      [
+        -2.1657650767362704e-15,
+        4.1967905747781195e-07
+      ]
+    ],
+    "position_noise_sd_m": 4.1983116231328176e-10,
+    "acceleration_noise_sd_ms2": 0.0006478264099879009,
+    "acceleration_lag1": 0.2219051880389569,
+    "position_lag1": 0.40690748747992067,
+    "static_baseline_g": 0.9998014411147761,
+    "floor_z_m": 1e-06,
+    "window_s": [
+      2,
+      10
+    ],
+    "sample_count": 801,
+    "warning": "Engineering position-noise floor and decimation mean R_for_exploratory_filter is NOT a calibrated real R for all motion regimes."
+  },
+  "physical_model_status": "Not validated: torque scaling/sign, acceleration calibration and 1-DOF model need independent checks",
+  "q_identified_from_real_data": false,
+  "notes": [
+    "Real R measured on stationary Earth hardware only; filtering at 100Hz changes its noise statistics",
+    "Real motor force is NOT used to claim a calibrated Q because torque conversion/polarity and stiction are unverified",
+    "Simulation-derived Q/R and K should NOT be deployed as real-hardware calibration"
+  ],
+  "stationary_force_audit": {
+    "raw_torque_sum_Nm": 0.02610352985438409,
+    "ideal_spindle_force_if_Nm": 32.80266304931798,
+    "platform_weight_N": 170.58667674999998,
+    "gravity_balance_difference_N_if_ideal_force": -137.784013700682,
+    "warning": "Stiction and unverified scaling mean this difference is NOT proof of erroneous torque calibration"
+  }
+}

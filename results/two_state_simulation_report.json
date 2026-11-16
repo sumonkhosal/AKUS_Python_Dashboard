@@ -1,0 +1,137 @@
+{
+  "plant": "linear",
+  "backend": "reference",
+  "seed": 42,
+  "dt_seconds": 0.01,
+  "parameters": {
+    "m_platform": 17.395,
+    "m_equivalent": 4154.59,
+    "b_viscous": 3994.857,
+    "friction_coulomb": 225.059,
+    "friction_position": 1207.7,
+    "z_reference": 0.249715,
+    "pitch": 0.005,
+    "gravity": 9.80665
+  },
+  "q_injected": 0.0001,
+  "q_estimated": 8.939875931624436e-05,
+  "Q_injected": [
+    [
+      3.309501352200676e-11,
+      4.952389158686112e-09
+    ],
+    [
+      4.952389158686112e-09,
+      9.904853997150218e-07
+    ]
+  ],
+  "Q_estimated": [
+    [
+      2.9586531484217345e-11,
+      4.427374464377575e-09
+    ],
+    [
+      4.427374464377575e-09,
+      8.854816585537731e-07
+    ]
+  ],
+  "R_injected": [
+    [
+      1.225e-07,
+      0.0
+    ],
+    [
+      0.0,
+      0.0016
+    ]
+  ],
+  "R_estimated": [
+    [
+      1.287228976905685e-07,
+      -2.190092812416631e-08
+    ],
+    [
+      -2.190092812416631e-08,
+      0.0015219094165495656
+    ]
+  ],
+  "first_K": [
+    [
+      0.5000004932359092,
+      5.797996790977479e-06
+    ],
+    [
+      -0.017252047847460365,
+      -0.2027981259452646
+    ]
+  ],
+  "last_K": [
+    [
+      0.1950077145971983,
+      -0.00016968724487093314
+    ],
+    [
+      2.1291284303118783,
+      -0.004188753889326031
+    ]
+  ],
+  "first_S": [
+    [
+      2.57445795381137e-07,
+      -2.190092812416631e-08
+    ],
+    [
+      -2.190092812416631e-08,
+      0.0018886652164844025
+    ]
+  ],
+  "last_S": [
+    [
+      1.599794166641101e-07,
+      -3.494578942905232e-07
+    ],
+    [
+      -3.4945789429052324e-07,
+      0.001528753566893752
+    ]
+  ],
+  "fit": {
+    "nll": -7823.801976128992,
+    "iterations": 11,
+    "near_bound": false
+  },
+  "metrics": {
+    "mean_nis": 2.040754672969001,
+    "n_samples": 920,
+    "position_innovation_mean": -9.532874710166696e-06,
+    "position_lag1_correlation": -0.026565312919098204,
+    "acceleration_innovation_mean": 0.0005511200771083146,
+    "acceleration_lag1_correlation": -0.01021096423235382,
+    "position_rmse_mm": 0.16383915550742514,
+    "velocity_rmse_mm_s": 2.6980332637408964,
+    "mean_nees": 2.129499231944976,
+    "position_95pct_coverage": 0.9347826086956522,
+    "raw_position_rmse_mm": 0.34701231847641356,
+    "nis_mean_95pct_nominal_range": [
+      1.872834991286043,
+      2.131282743019019
+    ],
+    "nees_mean_95pct_nominal_range": [
+      1.872834991286043,
+      2.131282743019019
+    ],
+    "q_ratio_to_known_injected": 0.8939875931624436,
+    "R_acc_ratio_to_known_injected": 0.9511933853434784,
+    "R_position_ratio_to_known_injected": 1.0507991648209674,
+    "training_samples": 950,
+    "validation_samples": 950
+  },
+  "warnings": [],
+  "notes": [
+    "Synthetic, known model/noise; not validated against hardware",
+    "Validation uses independent random seed and force profile",
+    "NIS and NEES intervals assume temporally independent residuals"
+  ],
+  "replay_python_analytical_max_abs_difference": 8.713030297258229e-13,
+  "replay_provenance": "Python analytical equations, NOT actual TwinCAT runtime"
+}

@@ -31,6 +31,7 @@ from akuskf.acceleration import (
     run_acceleration_benchmark,
 )
 from akuskf.twincat_export import generate_twincat_st_code, verify_python_to_twincat_equivalence
+from phase2_two_state import st_source as generate_twincat_2state_st, compare_reference_cyclewise
 from akuskf.synthetic import generate as generate_jan_synthetic
 from kalman_lab import _decimate
 from akus_sim import (
@@ -824,6 +825,91 @@ with tabs[9]:
                 'plant includes Coulomb static friction (`225.059 N`) and position-dependent friction (`1207.7 N/m²`) '
                 'omitted from the linear estimator. Innovation maximum-likelihood inflates `q_a` (`5.13e-4`) to '
                 'absorb deterministic unmodeled friction errors, and held-out NIS rises to `3.648`.')
+
+    with st.expander('Phase 2: Two-State [z, v] TwinCAT 3 Export (FB_AKUS_TwoStateKF.st) & 100 Hz Real Stationary R / Force Audit', expanded=True):
+        st.caption('Standalone Phase 2 Two-State (`x = [position z (m), velocity v (m/s)]`, `y = [z_meas, a_meas]`) '
+                   '100 Hz (`dt = 0.01 s`) Q/R/K identification, 2×2 Joseph-form TwinCAT 3 Structured Text generator, '
+                   'and real Earth stationary R / spindle-force audit (`phase2_two_state.py`).')
+        p2_lin_path = ROOT / 'results' / 'two_state_simulation_report.json'
+        p2_nl_path = ROOT / 'results' / 'nonlinear_plant_stress_test_report.json'
+        p2_real_path = ROOT / 'results' / 'real_stationary_R_report.json'
+        p2_st_path = ROOT / 'reference' / 'FB_AKUS_TwoStateKF.st'
+        p2_gold_path = ROOT / 'results' / 'twincat_2state_golden_vectors.csv'
+        if p2_lin_path.exists() and p2_nl_path.exists() and p2_real_path.exists():
+            p2_lin = json.loads(p2_lin_path.read_text(encoding='utf-8'))
+            p2_nl = json.loads(p2_nl_path.read_text(encoding='utf-8'))
+            p2_real = json.loads(p2_real_path.read_text(encoding='utf-8'))
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric('Matched Linear q_est (100 Hz)', f"{p2_lin['q_estimated']:.4e}", f"Injected: {p2_lin['q_injected']:.1e}")
+            m2.metric('Matched Linear 2D Mean NIS / NEES', f"{p2_lin['mean_nis']:.3f} / {p2_lin['mean_nees']:.3f}", 'Target ≈ 2.0')
+            m3.metric('Python ↔ 2-State ST Max Diff', f"{p2_lin['python_to_ST_analytical_replay']['max_abs_state_diff']:.2e}", 'IEEE-754 LREAL exact')
+            m4.metric('Real Earth Stationary Acc SD', f"{p2_real['acceleration_noise_sd_ms2']:.6f} m/s²", f"Baseline: {p2_real['static_baseline_g']:.6f} g")
+            st.dataframe(pd.DataFrame([
+                {
+                    '100 Hz Two-State Run': 'Matched Linear Plant (seed=42)',
+                    'q_injected': f"{p2_lin['q_injected']:.2e}",
+                    'q_estimated': f"{p2_lin['q_estimated']:.4e}",
+                    '2D Mean NIS (≈2.0)': f"{p2_lin['mean_nis']:.3f}",
+                    '2D Mean NEES (≈2.0)': f"{p2_lin['mean_nees']:.3f}",
+                    'Raw Pos RMSE [mm]': f"{p2_lin['raw_position_rmse_m']*1000:.3f}",
+                    'Filtered Pos RMSE [mm]': f"{p2_lin['filtered_position_rmse_m']*1000:.3f}",
+                    'Velocity RMSE [mm/s]': f"{p2_lin['velocity_rmse_ms']*1000:.3f}",
+                    '95% Pos Coverage': f"{p2_lin['position_95pct_coverage']*100:.1f}%",
+                    'Acc Innov Lag-1': f"{p2_lin['innovation_lag1_autocorr']['acceleration']:+.3f}",
+                },
+                {
+                    '100 Hz Two-State Run': 'Jan Nonlinear Euler Stress Test',
+                    'q_injected': f"{p2_nl['q_injected']:.2e}",
+                    'q_estimated': f"{p2_nl['q_estimated']:.4e} (3.76× inflated)",
+                    '2D Mean NIS (≈2.0)': f"{p2_nl['mean_nis']:.3f}",
+                    '2D Mean NEES (≈2.0)': f"{p2_nl['mean_nees']:.3f}",
+                    'Raw Pos RMSE [mm]': f"{p2_nl['raw_position_rmse_m']*1000:.3f}",
+                    'Filtered Pos RMSE [mm]': f"{p2_nl['filtered_position_rmse_m']*1000:.3f}",
+                    'Velocity RMSE [mm/s]': f"{p2_nl['velocity_rmse_ms']*1000:.3f}",
+                    '95% Pos Coverage': f"{p2_nl['position_95pct_coverage']*100:.1f}%",
+                    'Acc Innov Lag-1': f"{p2_nl['innovation_lag1_autocorr']['acceleration']:+.3f}",
+                },
+            ]), hide_index=True, use_container_width=True)
+            fa = p2_real['stationary_force_audit']
+            st.warning(
+                f"**Real Earth Stationary Force & R Audit (`{p2_real['source_file']}`, 2–10 s @ 100 Hz):** "
+                f"Stationary encoder position SD is `{p2_real['position_noise_sd_m']:.3e} m` (quantization-limited; "
+                f"`phase2_two_state.py` applies a `1 µm` engineering floor `R[0,0] = 1e-12 m²` and caps cross-correlation at `0.8`). "
+                f"Mean raw motor torque sum is `{fa['raw_torque_sum_mean']:.4f} Nm`, which yields `{fa['ideal_spindle_force_if_Nm_N']:.2f} N` "
+                f"under ideal ball-screw conversion `(2π / 0.005 m) × τ` vs. platform weight `{fa['platform_weight_N']:.2f} N` "
+                f"(discrepancy `{fa['force_minus_weight_N']:.2f} N` due to static friction / brake / torque-unit scaling). "
+                f"Real dynamic Q is therefore blocked until drive force scaling is calibrated."
+            )
+            if p2_st_path.exists():
+                st_2state_code = p2_st_path.read_text(encoding='utf-8')
+                with st.expander('View TwinCAT 3 Structured Text: FB_AKUS_TwoStateKF.st (2×2 Dynamic Gain + Joseph Update)', expanded=False):
+                    st.code(st_2state_code, language='pascal')
+                dl1, dl2, dl3 = st.columns(3)
+                with dl1:
+                    st.download_button(
+                        'Download FB_AKUS_TwoStateKF.st',
+                        st_2state_code.encode('utf-8'),
+                        file_name='FB_AKUS_TwoStateKF.st',
+                        mime='text/plain',
+                        use_container_width=True,
+                    )
+                with dl2:
+                    if p2_gold_path.exists():
+                        st.download_button(
+                            'Download 2-State Golden Vectors CSV',
+                            p2_gold_path.read_bytes(),
+                            file_name='twincat_2state_golden_vectors.csv',
+                            mime='text/csv',
+                            use_container_width=True,
+                        )
+                with dl3:
+                    st.download_button(
+                        'Download Real Stationary R Audit JSON',
+                        p2_real_path.read_bytes(),
+                        file_name='real_stationary_R_report.json',
+                        mime='application/json',
+                        use_container_width=True,
+                    )
 
 
 # v4: standalone acceleration-first Kalman estimator and Earth-hardware replay.
